@@ -3,12 +3,12 @@
 //! Consumes `UncheckedProgram` and returns `Result<CheckedProgram, TypeError>`.
 //! Fails at the first error.
 
+use crate::environment::Environment;
 use crate::ir::ast::{
     CheckedExpr, CheckedFunDecl, CheckedProgram, CheckedStmt, Expr, ExprD, FunDecl, Literal,
     Program, Statement, StatementD, Type, UncheckedExpr, UncheckedFunDecl, UncheckedProgram,
     UncheckedStmt,
 };
-use std::collections::HashMap;
 
 /// A type error reported by the type checker.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,9 +32,6 @@ impl std::fmt::Display for TypeError {
 
 impl std::error::Error for TypeError {}
 
-/// Function signature: (param types, return type).
-type FuncSig = (Vec<Type>, Type);
-
 /// Type-check a program. Returns `Ok(CheckedProgram)` if well-typed, `Err(TypeError)` on first error.
 /// Requires a `main` function as the entry point.
 pub fn type_check(program: &UncheckedProgram) -> Result<CheckedProgram, TypeError> {
@@ -45,18 +42,14 @@ pub fn type_check(program: &UncheckedProgram) -> Result<CheckedProgram, TypeErro
     if !has_main {
         return Err(TypeError::new("program must have a main function"));
     }
-    let func_sigs: HashMap<String, FuncSig> = program
-        .functions
-        .iter()
-        .map(|f| {
-            let param_tys = f.params.iter().map(|(_, ty)| ty.clone()).collect();
-            (f.name.clone(), (param_tys, f.return_type.clone()))
-        })
-        .collect();
-    let mut env: HashMap<String, Type> = HashMap::new();
+    let mut env = Environment::<Type>::new();
+    for f in &program.functions {
+        let param_tys = f.params.iter().map(|(_, ty)| ty.clone()).collect();
+        env.add_function_signature(f.name.clone(), param_tys, f.return_type.clone());
+    }
     let mut functions = Vec::new();
     for f in &program.functions {
-        let checked = type_check_fun_decl(f, &mut env, &func_sigs)?;
+        let checked = type_check_fun_decl(f, &mut env)?;
         functions.push(checked);
     }
     Ok(Program { functions })
@@ -64,14 +57,13 @@ pub fn type_check(program: &UncheckedProgram) -> Result<CheckedProgram, TypeErro
 
 fn type_check_fun_decl(
     f: &UncheckedFunDecl,
-    env: &mut HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &mut Environment<Type>,
 ) -> Result<CheckedFunDecl, TypeError> {
-    env.clear();
+    env.clear_bindings();
     for (name, ty) in &f.params {
-        env.insert(name.clone(), ty.clone());
+        env.add_binding(name.clone(), ty.clone());
     }
-    let body = type_check_stmt(&f.body, env, func_sigs)?;
+    let body = type_check_stmt(&f.body, env)?;
     Ok(FunDecl {
         name: f.name.clone(),
         params: f.params.clone(),
@@ -82,32 +74,31 @@ fn type_check_fun_decl(
 
 fn type_check_stmt(
     s: &UncheckedStmt,
-    env: &mut HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &mut Environment<Type>,
 ) -> Result<CheckedStmt, TypeError> {
     let stmt = match &s.stmt {
         Statement::Assign { target, value } => {
-            let value_checked = type_check_expr_to_typed(value, env, func_sigs)?;
-            type_check_assign_target(&target.exp, &value_checked.ty, env, func_sigs)?;
+            let value_checked = type_check_expr_to_typed(value, env)?;
+            type_check_assign_target(&target.exp, &value_checked.ty, env)?;
             Statement::Assign {
-                target: Box::new(type_check_expr_to_typed(target, env, func_sigs)?),
+                target: Box::new(type_check_expr_to_typed(target, env)?),
                 value: Box::new(value_checked),
             }
         }
         Statement::Block { seq } => {
             let mut checked = Vec::new();
             for st in seq {
-                checked.push(type_check_stmt(st, env, func_sigs)?);
+                checked.push(type_check_stmt(st, env)?);
             }
             Statement::Block { seq: checked }
         }
         Statement::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> = args
                 .iter()
-                .map(|a| type_check_expr_to_typed(a, env, func_sigs))
+                .map(|a| type_check_expr_to_typed(a, env))
                 .collect();
             let args_checked = args_checked?;
-            check_call(name, &args_checked, func_sigs)?;
+            check_call(name, &args_checked, env)?;
             Statement::Call {
                 name: name.clone(),
                 args: args_checked,
@@ -118,17 +109,17 @@ fn type_check_stmt(
             then_branch,
             else_branch,
         } => {
-            let cond_checked = type_check_expr_to_typed(cond, env, func_sigs)?;
+            let cond_checked = type_check_expr_to_typed(cond, env)?;
             if cond_checked.ty != Type::Bool {
                 return Err(TypeError::new(format!(
                     "if condition must be Bool, got {:?}",
                     cond_checked.ty
                 )));
             }
-            let then_checked = type_check_stmt(then_branch, env, func_sigs)?;
+            let then_checked = type_check_stmt(then_branch, env)?;
             let else_checked = else_branch
                 .as_ref()
-                .map(|e| type_check_stmt(e, env, func_sigs))
+                .map(|e| type_check_stmt(e, env))
                 .transpose()?;
             Statement::If {
                 cond: Box::new(cond_checked),
@@ -137,14 +128,14 @@ fn type_check_stmt(
             }
         }
         Statement::While { cond, body } => {
-            let cond_checked = type_check_expr_to_typed(cond, env, func_sigs)?;
+            let cond_checked = type_check_expr_to_typed(cond, env)?;
             if cond_checked.ty != Type::Bool {
                 return Err(TypeError::new(format!(
                     "while condition must be Bool, got {:?}",
                     cond_checked.ty
                 )));
             }
-            let body_checked = type_check_stmt(body, env, func_sigs)?;
+            let body_checked = type_check_stmt(body, env)?;
             Statement::While {
                 cond: Box::new(cond_checked),
                 body: Box::new(body_checked),
@@ -160,10 +151,10 @@ fn type_check_stmt(
 fn check_call(
     name: &str,
     args: &[CheckedExpr],
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &Environment<Type>,
 ) -> Result<(), TypeError> {
-    let (param_tys, _) = func_sigs
-        .get(name)
+    let (param_tys, _): &(Vec<Type>, Type) = env
+        .lookup_function_signature(name)
         .ok_or_else(|| TypeError::new(format!("undefined function: {}", name)))?;
     if args.len() != param_tys.len() {
         return Err(TypeError::new(format!(
@@ -190,20 +181,19 @@ fn check_call(
 fn type_check_assign_target(
     target: &Expr<()>,
     value_ty: &Type,
-    env: &mut HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &mut Environment<Type>,
 ) -> Result<(), TypeError> {
     match target {
         Expr::Ident(name) => {
-            env.insert(name.clone(), value_ty.clone());
+            env.add_binding(name.clone(), value_ty.clone());
             Ok(())
         }
         Expr::Index { base, index } => {
-            let index_ty = type_check_expr(index, env, func_sigs)?;
+            let index_ty = type_check_expr(index, env)?;
             if index_ty != Type::Int {
                 return Err(TypeError::new("array index must be Int"));
             }
-            let base_ty = type_check_expr(base, env, func_sigs)?;
+            let base_ty = type_check_expr(base, env)?;
             if let Type::Array(elem) = &base_ty {
                 if **elem != *value_ty {
                     return Err(TypeError::new("assignment type mismatch"));
@@ -219,94 +209,92 @@ fn type_check_assign_target(
 
 fn type_check_expr_to_typed(
     e: &UncheckedExpr,
-    env: &HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &Environment<Type>,
 ) -> Result<CheckedExpr, TypeError> {
-    let ty = type_check_expr(e, env, func_sigs)?;
-    let exp = type_check_expr_inner(&e.exp, env, func_sigs)?;
+    let ty = type_check_expr(e, env)?;
+    let exp = type_check_expr_inner(&e.exp, env)?;
     Ok(ExprD { exp, ty })
 }
 
 fn type_check_expr_inner(
     e: &Expr<()>,
-    env: &HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &Environment<Type>,
 ) -> Result<Expr<Type>, TypeError> {
     match e {
         Expr::Literal(l) => Ok(Expr::Literal(l.clone())),
         Expr::Ident(name) => Ok(Expr::Ident(name.clone())),
         Expr::Neg(inner) => {
-            let i = type_check_expr_to_typed(inner, env, func_sigs)?;
+            let i = type_check_expr_to_typed(inner, env)?;
             Ok(Expr::Neg(Box::new(i)))
         }
         Expr::Add(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Add(Box::new(lt), Box::new(rt)))
         }
         Expr::Sub(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Sub(Box::new(lt), Box::new(rt)))
         }
         Expr::Mul(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Mul(Box::new(lt), Box::new(rt)))
         }
         Expr::Div(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Div(Box::new(lt), Box::new(rt)))
         }
         Expr::Eq(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Eq(Box::new(lt), Box::new(rt)))
         }
         Expr::Ne(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Ne(Box::new(lt), Box::new(rt)))
         }
         Expr::Lt(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Lt(Box::new(lt), Box::new(rt)))
         }
         Expr::Le(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Le(Box::new(lt), Box::new(rt)))
         }
         Expr::Gt(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Gt(Box::new(lt), Box::new(rt)))
         }
         Expr::Ge(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Ge(Box::new(lt), Box::new(rt)))
         }
         Expr::Not(inner) => {
-            let i = type_check_expr_to_typed(inner, env, func_sigs)?;
+            let i = type_check_expr_to_typed(inner, env)?;
             Ok(Expr::Not(Box::new(i)))
         }
         Expr::And(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::And(Box::new(lt), Box::new(rt)))
         }
         Expr::Or(l, r) => {
-            let lt = type_check_expr_to_typed(l, env, func_sigs)?;
-            let rt = type_check_expr_to_typed(r, env, func_sigs)?;
+            let lt = type_check_expr_to_typed(l, env)?;
+            let rt = type_check_expr_to_typed(r, env)?;
             Ok(Expr::Or(Box::new(lt), Box::new(rt)))
         }
         Expr::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> = args
                 .iter()
-                .map(|a| type_check_expr_to_typed(a, env, func_sigs))
+                .map(|a| type_check_expr_to_typed(a, env))
                 .collect();
             Ok(Expr::Call {
                 name: name.clone(),
@@ -316,13 +304,13 @@ fn type_check_expr_inner(
         Expr::ArrayLit(elems) => {
             let elems_checked: Result<Vec<_>, _> = elems
                 .iter()
-                .map(|e| type_check_expr_to_typed(e, env, func_sigs))
+                .map(|e| type_check_expr_to_typed(e, env))
                 .collect();
             Ok(Expr::ArrayLit(elems_checked?))
         }
         Expr::Index { base, index } => {
-            let base_checked = type_check_expr_to_typed(base, env, func_sigs)?;
-            let index_checked = type_check_expr_to_typed(index, env, func_sigs)?;
+            let base_checked = type_check_expr_to_typed(base, env)?;
+            let index_checked = type_check_expr_to_typed(index, env)?;
             Ok(Expr::Index {
                 base: Box::new(base_checked),
                 index: Box::new(index_checked),
@@ -333,17 +321,16 @@ fn type_check_expr_inner(
 
 fn type_check_expr(
     e: &UncheckedExpr,
-    env: &HashMap<String, Type>,
-    func_sigs: &HashMap<String, FuncSig>,
+    env: &Environment<Type>,
 ) -> Result<Type, TypeError> {
     match &e.exp {
         Expr::Literal(l) => Ok(literal_type(l)),
         Expr::Ident(name) => env
-            .get(name)
+            .lookup(name)
             .cloned()
             .ok_or_else(|| TypeError::new(format!("undeclared variable: {}", name))),
         Expr::Neg(inner) => {
-            let ty = type_check_expr(inner, env, func_sigs)?;
+            let ty = type_check_expr(inner, env)?;
             if matches!(ty, Type::Int | Type::Float) {
                 Ok(ty)
             } else {
@@ -351,17 +338,17 @@ fn type_check_expr(
             }
         }
         Expr::Add(l, r) | Expr::Sub(l, r) | Expr::Mul(l, r) | Expr::Div(l, r) => {
-            let lt = type_check_expr(l, env, func_sigs)?;
-            let rt = type_check_expr(r, env, func_sigs)?;
+            let lt = type_check_expr(l, env)?;
+            let rt = type_check_expr(r, env)?;
             numeric_binop_result(&lt, &rt)
         }
         Expr::Eq(l, r) | Expr::Ne(l, r) | Expr::Lt(l, r) | Expr::Le(l, r) | Expr::Gt(l, r) | Expr::Ge(l, r) => {
-            let _lt = type_check_expr(l, env, func_sigs)?;
-            let _rt = type_check_expr(r, env, func_sigs)?;
+            let _lt = type_check_expr(l, env)?;
+            let _rt = type_check_expr(r, env)?;
             Ok(Type::Bool)
         }
         Expr::Not(inner) => {
-            let ty = type_check_expr(inner, env, func_sigs)?;
+            let ty = type_check_expr(inner, env)?;
             if ty == Type::Bool {
                 Ok(Type::Bool)
             } else {
@@ -369,8 +356,8 @@ fn type_check_expr(
             }
         }
         Expr::And(l, r) | Expr::Or(l, r) => {
-            let lt = type_check_expr(l, env, func_sigs)?;
-            let rt = type_check_expr(r, env, func_sigs)?;
+            let lt = type_check_expr(l, env)?;
+            let rt = type_check_expr(r, env)?;
             if lt == Type::Bool && rt == Type::Bool {
                 Ok(Type::Bool)
             } else {
@@ -380,11 +367,11 @@ fn type_check_expr(
         Expr::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> = args
                 .iter()
-                .map(|a| type_check_expr_to_typed(a, env, func_sigs))
+                .map(|a| type_check_expr_to_typed(a, env))
                 .collect();
             let args_checked = args_checked?;
-            let (param_tys, return_ty) = func_sigs
-                .get(name)
+            let (param_tys, return_ty): &(Vec<Type>, Type) = env
+                .lookup_function_signature(name)
                 .ok_or_else(|| TypeError::new(format!("undefined function: {}", name)))?;
             if args_checked.len() != param_tys.len() {
                 return Err(TypeError::new(format!(
@@ -411,9 +398,9 @@ fn type_check_expr(
             if elems.is_empty() {
                 return Err(TypeError::new("empty array literal needs type annotation"));
             }
-            let first = type_check_expr(&elems[0], env, func_sigs)?;
+            let first = type_check_expr(&elems[0], env)?;
             for e in elems.iter().skip(1) {
-                let ty = type_check_expr(e, env, func_sigs)?;
+                let ty = type_check_expr(e, env)?;
                 if !types_compatible(&first, &ty) {
                     return Err(TypeError::new("array elements must have same type"));
                 }
@@ -421,11 +408,11 @@ fn type_check_expr(
             Ok(Type::Array(Box::new(first)))
         }
         Expr::Index { base, index } => {
-            let index_ty = type_check_expr(index, env, func_sigs)?;
+            let index_ty = type_check_expr(index, env)?;
             if index_ty != Type::Int {
                 return Err(TypeError::new("array index must be Int"));
             }
-            let base_ty = type_check_expr(base, env, func_sigs)?;
+            let base_ty = type_check_expr(base, env)?;
             if let Type::Array(elem) = base_ty {
                 Ok(*elem)
             } else {
