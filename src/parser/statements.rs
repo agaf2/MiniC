@@ -1,6 +1,6 @@
 //! Statement parsers for MiniC.
 
-use crate::ir::ast::{Expr, Stmt};
+use crate::ir::ast::{Expr, ExprD, Statement, StatementD};
 use crate::parser::expressions::{expression, parse_call};
 use crate::parser::identifiers::identifier;
 use nom::{
@@ -13,8 +13,12 @@ use nom::{
     IResult,
 };
 
+fn wrap(s: Statement<()>) -> StatementD<()> {
+    StatementD { stmt: s, ty: () }
+}
+
 /// Parse any statement: if | while | call | block | assignment.
-pub fn statement(input: &str) -> IResult<&str, Stmt> {
+pub fn statement(input: &str) -> IResult<&str, StatementD<()>> {
     preceded(
         multispace0,
         alt((
@@ -28,7 +32,7 @@ pub fn statement(input: &str) -> IResult<&str, Stmt> {
 }
 
 /// Parse a block statement: `{ stmt ; stmt ; ... }`.
-fn block_statement(input: &str) -> IResult<&str, Stmt> {
+fn block_statement(input: &str) -> IResult<&str, StatementD<()>> {
     map(
         delimited(
             preceded(multispace0, char('{')),
@@ -38,17 +42,17 @@ fn block_statement(input: &str) -> IResult<&str, Stmt> {
             ),
             preceded(multispace0, char('}')),
         ),
-        |seq| Stmt::Block { seq },
+        |seq| wrap(Statement::Block { seq }),
     )(input)
 }
 
 /// Parse a function call as a statement: `identifier ( expr_list )`.
-fn call_statement(input: &str) -> IResult<&str, Stmt> {
-    map(parse_call, |(name, args)| Stmt::Call { name, args })(input)
+fn call_statement(input: &str) -> IResult<&str, StatementD<()>> {
+    map(parse_call, |(name, args)| wrap(Statement::Call { name, args }))(input)
 }
 
 /// Parse an if-then-else statement: `if expr then stmt [else stmt]`.
-fn if_statement(input: &str) -> IResult<&str, Stmt> {
+fn if_statement(input: &str) -> IResult<&str, StatementD<()>> {
     let (rest, _) = preceded(multispace0, tag("if"))(input)?;
     let (rest, cond) = preceded(multispace0, expression)(rest)?;
     let (rest, _) = preceded(multispace0, tag("then"))(rest)?;
@@ -62,33 +66,36 @@ fn if_statement(input: &str) -> IResult<&str, Stmt> {
     ))(rest)?;
     Ok((
         rest,
-        Stmt::If {
+        wrap(Statement::If {
             cond: Box::new(cond),
             then_branch: Box::new(then_branch),
             else_branch: else_branch.map(Box::new),
-        },
+        }),
     ))
 }
 
 /// Parse a while statement: `while expr do stmt`.
-fn while_statement(input: &str) -> IResult<&str, Stmt> {
+fn while_statement(input: &str) -> IResult<&str, StatementD<()>> {
     let (rest, _) = preceded(multispace0, tag("while"))(input)?;
     let (rest, cond) = preceded(multispace0, expression)(rest)?;
     let (rest, _) = preceded(multispace0, tag("do"))(rest)?;
     let (rest, body) = preceded(multispace0, statement)(rest)?;
     Ok((
         rest,
-        Stmt::While {
+        wrap(Statement::While {
             cond: Box::new(cond),
             body: Box::new(body),
-        },
+        }),
     ))
 }
 
 /// Parse an lvalue: identifier followed by zero or more `[ expr ]` suffixes.
-fn lvalue(input: &str) -> IResult<&str, Expr> {
+fn lvalue(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, id) = preceded(multispace0, identifier)(input)?;
-    let mut acc: Expr = Expr::Ident(id.to_string());
+    let mut acc = ExprD {
+        exp: Expr::Ident(id.to_string()),
+        ty: (),
+    };
     loop {
         let index_parse = delimited(
             preceded(multispace0, char('[')),
@@ -97,9 +104,12 @@ fn lvalue(input: &str) -> IResult<&str, Expr> {
         )(rest);
         match index_parse {
             Ok((r, index)) => {
-                acc = Expr::Index {
-                    base: Box::new(acc),
-                    index: Box::new(index),
+                acc = ExprD {
+                    exp: Expr::Index {
+                        base: Box::new(acc),
+                        index: Box::new(index),
+                    },
+                    ty: (),
                 };
                 rest = r;
             }
@@ -110,16 +120,18 @@ fn lvalue(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Parse an assignment statement: `lvalue = expression`.
-pub fn assignment(input: &str) -> IResult<&str, Stmt> {
+pub fn assignment(input: &str) -> IResult<&str, StatementD<()>> {
     map(
         tuple((
             lvalue,
             preceded(multispace0, nom::bytes::complete::tag("=")),
             preceded(multispace0, expression),
         )),
-        |(target, _, value)| Stmt::Assign {
-            target: Box::new(target),
-            value: Box::new(value),
+        |(target, _, value)| {
+            wrap(Statement::Assign {
+                target: Box::new(target),
+                value: Box::new(value),
+            })
         },
     )(input)
 }

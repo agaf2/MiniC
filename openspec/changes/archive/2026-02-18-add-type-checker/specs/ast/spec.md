@@ -1,42 +1,4 @@
-# AST
-
-## Purpose
-
-Abstract syntax tree for MiniC: literals, expressions, statements, and program root.
-
-## Requirements
-
-### Requirement: AST module location
-
-The AST SHALL be defined in `src/ir/ast.rs`. The `ir` module SHALL represent intermediate representations produced by the parser and consumed by later phases (semantic analysis, code generation).
-
-#### Scenario: Module exists and compiles
-
-- **WHEN** the project is built with `cargo build`
-- **THEN** the `ir::ast` module SHALL compile without errors and SHALL be reachable from the crate root
-
-#### Scenario: AST is independent of parser
-
-- **WHEN** the AST types are used by the parser
-- **THEN** the parser SHALL depend on `ir::ast`, and `ir::ast` SHALL NOT depend on the parser module
-
----
-
-### Requirement: Literal and identifier nodes
-
-The AST SHALL include nodes for literals (integer, float, string, boolean) and identifiers (variable names).
-
-#### Scenario: Literal variants
-
-- **WHEN** a literal is represented in the AST
-- **THEN** it SHALL be one of `Int(i64)`, `Float(f64)`, `Str(String)`, or `Bool(bool)`
-
-#### Scenario: Identifier representation
-
-- **WHEN** a variable reference is represented in the AST
-- **THEN** it SHALL store the identifier as a `String` (or equivalent owned type)
-
----
+## MODIFIED Requirements
 
 ### Requirement: Expression nodes
 
@@ -163,7 +125,7 @@ The AST SHALL define a root node representing a complete MiniC program.
 - **WHEN** a program includes function declarations
 - **THEN** the root SHALL have `functions: Vec<FunDecl<Ty>>` and `body: Vec<StatementD<Ty>>` for the main statements
 
----
+## ADDED Requirements
 
 ### Requirement: Parser output
 
@@ -178,19 +140,3 @@ The parser SHALL produce the unchecked AST with `Ty = ()` at every node.
 
 - **WHEN** the parser produces a statement
 - **THEN** it SHALL return `StatementD<()>` with `ty: ()` at each statement node
-
----
-
-### Requirement: Debug and display
-
-AST types SHALL derive `Debug` and `PartialEq` for debugging and testing.
-
-#### Scenario: Debug output
-
-- **WHEN** an AST node is printed with `{:?}` or `dbg!()`
-- **THEN** it SHALL produce readable output showing structure and values
-
-#### Scenario: Equality comparison
-
-- **WHEN** two AST nodes are compared with `==`
-- **THEN** structural equality SHALL be supported for tests

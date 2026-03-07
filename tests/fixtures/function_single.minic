@@ -1,1 +1,1 @@
-def foo() x = 1
+def foo() -> Unit x = 1

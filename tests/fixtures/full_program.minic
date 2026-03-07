@@ -1,9 +1,9 @@
-def inc(x) {
+def inc(x) -> Unit {
   x = x + 1;
   x = x
 }
 
-def main() y = 0
+def main() -> Unit y = 0
 
 inc(1)
 y = 42

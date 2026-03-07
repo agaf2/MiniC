@@ -1,6 +1,6 @@
 //! Expression parsers for MiniC.
 
-use crate::ir::ast::Expr;
+use crate::ir::ast::{Expr, ExprD};
 use crate::parser::identifiers::identifier;
 use crate::parser::literals::literal;
 use nom::{
@@ -13,8 +13,12 @@ use nom::{
     IResult,
 };
 
+fn wrap(e: Expr<()>) -> ExprD<()> {
+    ExprD { exp: e, ty: () }
+}
+
 /// Parse a function call: `identifier ( expr_list )`. Returns (name, args).
-pub fn parse_call(input: &str) -> IResult<&str, (String, Vec<Expr>)> {
+pub fn parse_call(input: &str) -> IResult<&str, (String, Vec<ExprD<()>>)> {
     let (rest, name) = preceded(multispace0, identifier)(input)?;
     let (rest, args) = delimited(
         preceded(multispace0, tag("(")),
@@ -28,10 +32,10 @@ pub fn parse_call(input: &str) -> IResult<&str, (String, Vec<Expr>)> {
 }
 
 /// Atom: literal, call, array literal, identifier, or parenthesized expression.
-fn atom(input: &str) -> IResult<&str, Expr> {
+fn atom(input: &str) -> IResult<&str, ExprD<()>> {
     alt((
-        map(literal, |l| Expr::Literal(l.into())),
-        map(parse_call, |(name, args)| Expr::Call { name, args }),
+        map(literal, |l| wrap(Expr::Literal(l.into()))),
+        map(parse_call, |(name, args)| wrap(Expr::Call { name, args })),
         map(
             delimited(
                 preceded(multispace0, char('[')),
@@ -41,9 +45,9 @@ fn atom(input: &str) -> IResult<&str, Expr> {
                 ),
                 preceded(multispace0, char(']')),
             ),
-            Expr::ArrayLit,
+            |elems| wrap(Expr::ArrayLit(elems)),
         ),
-        map(identifier, |s: &str| Expr::Ident(s.to_string())),
+        map(identifier, |s: &str| wrap(Expr::Ident(s.to_string()))),
         delimited(
             preceded(multispace0, char('(')),
             preceded(multispace0, expression),
@@ -53,7 +57,7 @@ fn atom(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Primary: atom with zero or more index postfixes `[ expr ]`.
-fn primary(input: &str) -> IResult<&str, Expr> {
+fn primary(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = atom(input)?;
     loop {
         let index_parse = delimited(
@@ -63,10 +67,10 @@ fn primary(input: &str) -> IResult<&str, Expr> {
         )(rest);
         match index_parse {
             Ok((r, index)) => {
-                acc = Expr::Index {
+                acc = wrap(Expr::Index {
                     base: Box::new(acc),
                     index: Box::new(index),
-                };
+                });
                 rest = r;
             }
             Err(_) => break,
@@ -76,28 +80,28 @@ fn primary(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Unary: optional unary `-` applied to primary.
-fn unary(input: &str) -> IResult<&str, Expr> {
+fn unary(input: &str) -> IResult<&str, ExprD<()>> {
     alt((
         map(pair(preceded(multispace0, tag("-")), unary), |(_, e)| {
-            Expr::Neg(Box::new(e))
+            wrap(Expr::Neg(Box::new(e)))
         }),
         primary,
     ))(input)
 }
 
 /// Multiplicative: unary with `*` and `/` (left-associative).
-fn multiplicative(input: &str) -> IResult<&str, Expr> {
+fn multiplicative(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = unary(input)?;
     loop {
         let mul = tuple((multispace0, tag("*"), multispace0, unary))(rest);
         if let Ok((r, (_, _, _, e))) = mul {
-            acc = Expr::Mul(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::Mul(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
         let div = tuple((multispace0, tag("/"), multispace0, unary))(rest);
         if let Ok((r, (_, _, _, e))) = div {
-            acc = Expr::Div(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::Div(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
@@ -107,18 +111,18 @@ fn multiplicative(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Additive: multiplicative with `+` and `-` (left-associative).
-fn additive(input: &str) -> IResult<&str, Expr> {
+fn additive(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = multiplicative(input)?;
     loop {
         let add = tuple((multispace0, tag("+"), multispace0, multiplicative))(rest);
         if let Ok((r, (_, _, _, e))) = add {
-            acc = Expr::Add(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::Add(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
         let sub = tuple((multispace0, tag("-"), multispace0, multiplicative))(rest);
         if let Ok((r, (_, _, _, e))) = sub {
-            acc = Expr::Sub(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::Sub(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
@@ -128,7 +132,7 @@ fn additive(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Relational: additive with ==, !=, <, <=, >, >=
-fn relational(input: &str) -> IResult<&str, Expr> {
+fn relational(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = additive(input)?;
     loop {
         let ops = alt((
@@ -141,7 +145,7 @@ fn relational(input: &str) -> IResult<&str, Expr> {
         ))(rest);
         match ops {
             Ok((r, (_, op, _, e))) => {
-                acc = match op {
+                acc = wrap(match op {
                     "==" => Expr::Eq(Box::new(acc), Box::new(e)),
                     "!=" => Expr::Ne(Box::new(acc), Box::new(e)),
                     "<" => Expr::Lt(Box::new(acc), Box::new(e)),
@@ -149,7 +153,7 @@ fn relational(input: &str) -> IResult<&str, Expr> {
                     ">" => Expr::Gt(Box::new(acc), Box::new(e)),
                     ">=" => Expr::Ge(Box::new(acc), Box::new(e)),
                     _ => unreachable!(),
-                };
+                });
                 rest = r;
             }
             Err(_) => break,
@@ -159,26 +163,26 @@ fn relational(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Logical not: optional `!` applied to relational.
-fn logical_not(input: &str) -> IResult<&str, Expr> {
+fn logical_not(input: &str) -> IResult<&str, ExprD<()>> {
     alt((
         map(
             pair(
                 preceded(multispace0, char('!')),
                 preceded(multispace0, logical_not),
             ),
-            |(_, e)| Expr::Not(Box::new(e)),
+            |(_, e)| wrap(Expr::Not(Box::new(e))),
         ),
         relational,
     ))(input)
 }
 
 /// Logical and: logical_not with `and` (left-associative).
-fn logical_and(input: &str) -> IResult<&str, Expr> {
+fn logical_and(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = logical_not(input)?;
     loop {
         let and = tuple((multispace0, tag("and"), multispace0, logical_not))(rest);
         if let Ok((r, (_, _, _, e))) = and {
-            acc = Expr::And(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::And(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
@@ -188,12 +192,12 @@ fn logical_and(input: &str) -> IResult<&str, Expr> {
 }
 
 /// Logical or: logical_and with `or` (left-associative).
-fn logical_or(input: &str) -> IResult<&str, Expr> {
+fn logical_or(input: &str) -> IResult<&str, ExprD<()>> {
     let (mut rest, mut acc) = logical_and(input)?;
     loop {
         let or = tuple((multispace0, tag("or"), multispace0, logical_and))(rest);
         if let Ok((r, (_, _, _, e))) = or {
-            acc = Expr::Or(Box::new(acc), Box::new(e));
+            acc = wrap(Expr::Or(Box::new(acc), Box::new(e)));
             rest = r;
             continue;
         }
@@ -202,7 +206,7 @@ fn logical_or(input: &str) -> IResult<&str, Expr> {
     Ok((rest, acc))
 }
 
-/// Top-level expression parser.
-pub fn expression(input: &str) -> IResult<&str, Expr> {
+/// Top-level expression parser. Returns ExprD<()> with ty: () at each node.
+pub fn expression(input: &str) -> IResult<&str, ExprD<()>> {
     preceded(multispace0, logical_or)(input)
 }

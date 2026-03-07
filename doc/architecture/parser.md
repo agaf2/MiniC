@@ -2,6 +2,8 @@
 
 This document describes the MiniC parser: how it works, the concepts it builds on, and how operator precedence is implemented. We proceed step by step from parsing fundamentals to the concrete design.
 
+*See also:* [AST Architecture](ast.md), [Type Checker Design](../design/type-checker.md), [Test Architecture](tests.md)
+
 ---
 
 ## 1. What is Parsing?
@@ -150,7 +152,83 @@ Function calls appear in two places:
 
 `parse_call` returns `(String, Vec<Expr>)` and is shared by both expression and statement parsers.
 
-### 4.6 Program
+### 4.6 Arrays
+
+Arrays support literals, indexing (read), and indexed assignment (write). The rules are split between the expression parser and the statement parser.
+
+#### 4.6.1 Atom and primary
+
+The expression parser uses two layers for array support:
+
+- **Atom**: The base of an expression—literal, call, array literal, identifier, or parenthesized expression. Order in `atom`:
+  1. literal
+  2. call (`identifier(args)`)
+  3. **array literal** `[ expr, expr, ... ]`
+  4. identifier
+  5. `( expr )`
+
+- **Primary**: Atom plus zero or more index postfixes `[ expr ]`. After parsing an atom, the parser repeatedly tries `[ expr ]` and wraps the result in `Expr::Index { base, index }`.
+
+Array literal is tried before identifier so that `[1, 2]` parses as an array, not as `[` followed by invalid input. The index postfix applies to any atom, so `arr`, `[1,2]`, `foo()`, and `(x)` can all be indexed.
+
+#### 4.6.2 Array literal
+
+Syntax: `[ expr , expr , ... ]` or `[]`. Elements are comma-separated expressions; the list may be empty. Produces `Expr::ArrayLit(Vec<Expr>)`.
+
+```rust
+delimited(
+    preceded(multispace0, char('[')),
+    separated_list0(
+        preceded(multispace0, tag(",")),
+        preceded(multispace0, expression),
+    ),
+    preceded(multispace0, char(']')),
+)
+```
+
+#### 4.6.3 Index postfix
+
+After an atom is parsed, a loop repeatedly matches `[ expr ]`:
+
+```rust
+fn primary(input: &str) -> IResult<&str, Expr> {
+    let (mut rest, mut acc) = atom(input)?;
+    loop {
+        let index_parse = delimited(char('['), expression, char(']'))(rest);
+        match index_parse {
+            Ok((r, index)) => {
+                acc = Expr::Index { base: Box::new(acc), index: Box::new(index) };
+                rest = r;
+            }
+            Err(_) => break,
+        }
+    }
+    Ok((rest, acc))
+}
+```
+
+For `arr[i][j]`: atom yields `Ident("arr")`, then `[i]` → `Index(arr, i)`, then `[j]` → `Index(Index(arr,i), j)`.
+
+#### 4.6.4 Indexed assignment (lvalue)
+
+Assignment targets can be simple (`x`) or indexed (`arr[i]`). The assignment parser uses an **lvalue**: identifier followed by zero or more `[ expr ]` suffixes. Produces `Expr::Ident` or `Expr::Index` (possibly nested).
+
+`Stmt::Assign { target: Box<Expr>, value: Box<Expr> }` — `target` is the lvalue.
+
+| Input      | Parsed target              |
+|-----------|----------------------------|
+| `x = 1`   | `Expr::Ident("x")`         |
+| `arr[i] = 1` | `Expr::Index { base: Ident("arr"), index: Ident("i") }` |
+| `m[i][j] = x` | `Expr::Index { base: Index(...), index: Ident("j") }` |
+
+#### 4.6.5 Parsing order summary
+
+| Context      | Rule                                                                 |
+|-------------|----------------------------------------------------------------------|
+| Expression  | `atom` = literal \| call \| array \| identifier \| `(expr)`; `primary` = atom + `[expr]*` |
+| Assignment  | `lvalue` = identifier + `[expr]*`; then `= expr`                     |
+
+### 4.7 Program
 
 The top-level parser produces a `Program { functions, body }`:
 
@@ -177,7 +255,7 @@ The expression parser is structured as a chain of functions, each handling one p
 
 | Level | Function | Operators | Binds |
 |-------|----------|-----------|-------|
-| Highest | `primary` | literals, `identifier(args)` (call), identifiers, `(expr)` | — |
+| Highest | `primary` | literals, `identifier(args)` (call), `[expr, ...]` (array), identifiers, `(expr)`, then `[expr]` postfix | — |
 | | `unary` | `-` | — |
 | | `multiplicative` | `*`, `/` | left |
 | | `additive` | `+`, `-` | left |
@@ -284,7 +362,7 @@ The parser is covered by two test suites:
 
 ### 6.1 Unit tests (`tests/parser.rs`)
 
-Unit tests parse individual constructs (literals, identifiers, expressions, statements, functions, blocks) from inline strings. They verify each parser in isolation and cover edge cases (e.g., invalid identifiers, unbalanced parentheses).
+Unit tests parse individual constructs (literals, identifiers, expressions, statements, functions, blocks, arrays) from inline strings. They verify each parser in isolation and cover edge cases (e.g., invalid identifiers, unbalanced parentheses).
 
 ### 6.2 Program integration tests (`tests/program.rs`)
 
@@ -310,6 +388,7 @@ Tests use `env!("CARGO_MANIFEST_DIR")` so fixture paths work regardless of the w
 - **Nom** provides combinators like `alt`, `tuple`, `map`, `preceded`, `delimited`.
 - **Precedence** is encoded by the call chain: each level calls the next higher level for operands.
 - **Left-associativity** is achieved by a loop that accumulates the left operand and repeatedly extends it with `op(acc, right)`.
+- **Arrays** use atom (array literal before identifier) and primary (index postfix loop); assignment uses lvalue (identifier + `[expr]*`).
 - **Tests** are split into unit tests (inline strings) and integration tests (fixture files).
 
 For more on nom, see the [nom documentation](https://docs.rs/nom/).

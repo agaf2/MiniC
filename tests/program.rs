@@ -2,14 +2,14 @@
 
 use nom::combinator::all_consuming;
 use std::path::Path;
-use MiniC::ir::ast::{Expr, Program, Stmt};
-use MiniC::parser::program;
+use mini_c::ir::ast::{Expr, Program, Statement};
+use mini_c::parser::program;
 
 fn fixtures_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-fn parse_program_file(name: &str) -> Result<Program, nom::Err<nom::error::Error<String>>> {
+fn parse_program_file(name: &str) -> Result<Program<()>, nom::Err<nom::error::Error<String>>> {
     let path = fixtures_dir().join(name);
     let src = std::fs::read_to_string(&path).expect("fixture file should exist");
     let src = src.trim();
@@ -33,8 +33,8 @@ fn test_parse_statements_only() {
         parse_program_file("statements_only.minic").expect("statements-only program should parse");
     assert!(prog.functions.is_empty());
     assert_eq!(prog.body.len(), 2);
-    assert!(matches!(prog.body[0], Stmt::Assign { ref target, .. } if matches!(target.as_ref(), Expr::Ident(s) if s == "x")));
-    assert!(matches!(prog.body[1], Stmt::Assign { ref target, .. } if matches!(target.as_ref(), Expr::Ident(s) if s == "y")));
+    assert!(matches!(prog.body[0].stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "x")));
+    assert!(matches!(prog.body[1].stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "y")));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn test_parse_function_single() {
     assert_eq!(prog.functions[0].name, "foo");
     assert!(prog.functions[0].params.is_empty());
     assert!(
-        matches!(prog.functions[0].body.as_ref(), Stmt::Assign { ref target, .. } if matches!(target.as_ref(), Expr::Ident(s) if s == "x"))
+        matches!(prog.functions[0].body.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "x"))
     );
     assert!(prog.body.is_empty());
 }
@@ -57,7 +57,7 @@ fn test_parse_function_with_block() {
     assert_eq!(prog.functions.len(), 1);
     assert_eq!(prog.functions[0].name, "add");
     assert_eq!(prog.functions[0].params, vec!["x", "y"]);
-    assert!(matches!(prog.functions[0].body.as_ref(), Stmt::Block { ref seq } if seq.len() == 2));
+    assert!(matches!(prog.functions[0].body.stmt, Statement::Block { ref seq } if seq.len() == 2));
 }
 
 #[test]
@@ -67,8 +67,8 @@ fn test_parse_full_program() {
     assert_eq!(prog.functions[0].name, "inc");
     assert_eq!(prog.functions[1].name, "main");
     assert_eq!(prog.body.len(), 2);
-    assert!(matches!(prog.body[0], Stmt::Call { ref name, .. } if name == "inc"));
-    assert!(matches!(prog.body[1], Stmt::Assign { ref target, .. } if matches!(target.as_ref(), Expr::Ident(s) if s == "y")));
+    assert!(matches!(prog.body[0].stmt, Statement::Call { ref name, .. } if name == "inc"));
+    assert!(matches!(prog.body[1].stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "y")));
 }
 
 #[test]

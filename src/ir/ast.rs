@@ -1,4 +1,22 @@
 //! Abstract syntax tree for MiniC.
+//!
+//! The AST is parameterized by a type decoration `Ty`:
+//! - `Ty = ()` for unchecked (parser output)
+//! - `Ty = Type` for checked (type checker output)
+//!
+//! See `doc/architecture/ast.md` for the design.
+
+/// MiniC types: scalar, array, function.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Unit,
+    Int,
+    Float,
+    Bool,
+    Str,
+    Array(Box<Type>),
+    Fun(Vec<Type>, Box<Type>),
+}
 
 /// A literal value.
 #[derive(Debug, Clone, PartialEq)]
@@ -9,77 +27,102 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// Expression with type decoration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprD<Ty> {
+    pub exp: Expr<Ty>,
+    pub ty: Ty,
+}
+
 /// An expression: literals, identifiers, and composed operations.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum Expr<Ty> {
     Literal(Literal),
     Ident(String),
     /// Unary minus (arithmetic)
-    Neg(Box<Expr>),
-    Add(Box<Expr>, Box<Expr>),
-    Sub(Box<Expr>, Box<Expr>),
-    Mul(Box<Expr>, Box<Expr>),
-    Div(Box<Expr>, Box<Expr>),
-    Eq(Box<Expr>, Box<Expr>),
-    Ne(Box<Expr>, Box<Expr>),
-    Lt(Box<Expr>, Box<Expr>),
-    Le(Box<Expr>, Box<Expr>),
-    Gt(Box<Expr>, Box<Expr>),
-    Ge(Box<Expr>, Box<Expr>),
-    Not(Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
+    Neg(Box<ExprD<Ty>>),
+    Add(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Sub(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Mul(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Div(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Eq(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Ne(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Lt(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Le(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Gt(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Ge(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Not(Box<ExprD<Ty>>),
+    And(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
+    Or(Box<ExprD<Ty>>, Box<ExprD<Ty>>),
     /// Function call: name(args)
     Call {
         name: String,
-        args: Vec<Expr>,
+        args: Vec<ExprD<Ty>>,
     },
     /// Array literal: [ expr, expr, ... ]
-    ArrayLit(Vec<Expr>),
+    ArrayLit(Vec<ExprD<Ty>>),
     /// Index expression: base[index]
     Index {
-        base: Box<Expr>,
-        index: Box<Expr>,
+        base: Box<ExprD<Ty>>,
+        index: Box<ExprD<Ty>>,
+    },
+}
+
+/// Statement with type decoration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatementD<Ty> {
+    pub stmt: Statement<Ty>,
+    pub ty: Ty,
+}
+
+/// A statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Statement<Ty> {
+    Assign {
+        target: Box<ExprD<Ty>>,
+        value: Box<ExprD<Ty>>,
+    },
+    /// Block of statements: `{ stmt ; stmt ; ... }`
+    Block {
+        seq: Vec<StatementD<Ty>>,
+    },
+    Call {
+        name: String,
+        args: Vec<ExprD<Ty>>,
+    },
+    If {
+        cond: Box<ExprD<Ty>>,
+        then_branch: Box<StatementD<Ty>>,
+        else_branch: Option<Box<StatementD<Ty>>>,
+    },
+    While {
+        cond: Box<ExprD<Ty>>,
+        body: Box<StatementD<Ty>>,
     },
 }
 
 /// A function declaration.
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunDecl {
+pub struct FunDecl<Ty> {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Box<Stmt>,
-}
-
-/// A statement.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
-    Assign {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
-    /// Block of statements: `{ stmt ; stmt ; ... }`
-    Block {
-        seq: Vec<Stmt>,
-    },
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
-    If {
-        cond: Box<Expr>,
-        then_branch: Box<Stmt>,
-        else_branch: Option<Box<Stmt>>,
-    },
-    While {
-        cond: Box<Expr>,
-        body: Box<Stmt>,
-    },
+    pub return_type: Type,
+    pub body: Box<StatementD<Ty>>,
 }
 
 /// A complete MiniC program: function declarations and main body.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Program {
-    pub functions: Vec<FunDecl>,
-    pub body: Vec<Stmt>,
+pub struct Program<Ty> {
+    pub functions: Vec<FunDecl<Ty>>,
+    pub body: Vec<StatementD<Ty>>,
 }
+
+// Type synonyms for checked and unchecked phases.
+pub type UncheckedExpr = ExprD<()>;
+pub type CheckedExpr = ExprD<Type>;
+pub type UncheckedStmt = StatementD<()>;
+pub type CheckedStmt = StatementD<Type>;
+pub type UncheckedFunDecl = FunDecl<()>;
+pub type CheckedFunDecl = FunDecl<Type>;
+pub type UncheckedProgram = Program<()>;
+pub type CheckedProgram = Program<Type>;
