@@ -91,41 +91,41 @@ A block groups multiple statements between `{` and `}`, separated by `;`:
 {
   int x = 1;
   int y = 2;
-  print(x + y)
+  print(x + y);
 }
 ```
 
 ### If / else
 
 ```c
-if x > 0 then
-  print("positive")
-else
-  print("non-positive")
+if x > 0 {
+  print("positive");
+} else {
+  print("non-positive");
+}
 ```
 
-The `else` branch is optional. Each branch is a single statement (use a block
-for multiple steps).
+The `else` branch is optional. Both branches must be blocks.
 
 ### While loop
 
 ```c
-while i < 10 do {
+while i < 10 {
   print(i);
-  i = i + 1
+  i = i + 1;
 }
 ```
 
 ### Function call (as a statement)
 
 ```c
-print(result)
+print(result);
 ```
 
 ### Return
 
 ```c
-return x + 1
+return x + 1;
 ```
 
 Void functions can use `return` with no value, or simply let control reach
@@ -216,15 +216,14 @@ MiniC provides a small standard library:
 Here is a complete MiniC program that computes `10!` and prints the result:
 
 ```c
-int factorial(int n)
-  if n <= 1 then
-    return 1
-  else
-    return n * factorial(n - 1)
+int factorial(int n) {
+  if n <= 1 { return 1; }
+  return n * factorial(n - 1);
+}
 
 void main() {
   int result = factorial(10);
-  print(result)
+  print(result);
 }
 ```
 

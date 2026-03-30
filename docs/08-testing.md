@@ -229,11 +229,13 @@ by the test — these tests mainly check return status and runtime errors:
 #[test]
 fn test_factorial() {
     assert!(run(
-        "int factorial(int n)
-           if n <= 1 then return 1 else return n * factorial(n - 1)
+        "int factorial(int n) {
+           if n <= 1 { return 1; }
+           return n * factorial(n - 1);
+         }
          void main() {
            int r = factorial(10);
-           print(r)
+           print(r);
          }"
     ).is_ok());
 }
@@ -241,7 +243,7 @@ fn test_factorial() {
 #[test]
 fn test_out_of_bounds() {
     let result = run(
-        "void main() { int[] a = [1, 2]; int x = a[5] }"
+        "void main() { int[] a = [1, 2]; int x = a[5]; }"
     );
     assert!(result.is_err());
 }
@@ -297,11 +299,12 @@ the result:
 #[test]
 fn test_stdlib_min() {
     assert!(run(
-        "int min(int a, int b)
-           if a <= b then return a else return b
+        "int min(int a, int b) {
+           if a <= b { return a; } else { return b; }
+         }
          void main() {
            int r = min(3, 7);
-           print(r)
+           print(r);
          }"
     ).is_ok());
 }

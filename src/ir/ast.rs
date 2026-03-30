@@ -132,7 +132,7 @@ pub enum Statement<Ty> {
         target: Box<ExprD<Ty>>,
         value: Box<ExprD<Ty>>,
     },
-    /// Block of statements: `{ stmt ; stmt ; ... }`
+    /// Block of statements: `{ stmt* }`
     Block {
         seq: Vec<StatementD<Ty>>,
     },

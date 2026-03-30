@@ -288,24 +288,24 @@ fn test_invalid_unbalanced_paren() {
 
 #[test]
 fn test_simple_assignment() {
-    let result = assignment("x = 42").unwrap().1;
+    let result = assignment("x = 42;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Ident(ref s) if s == "x") && value.exp == Expr::Literal(Literal::Int(42))));
 
-    let result = assignment("count = 0").unwrap().1;
+    let result = assignment("count = 0;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Ident(ref s) if s == "count") && value.exp == Expr::Literal(Literal::Int(0))));
 }
 
 #[test]
 fn test_assignment_with_expression() {
-    let result = assignment("sum = a + b").unwrap().1;
+    let result = assignment("sum = a + b;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "sum")));
     if let Statement::Assign { value, .. } = &result.stmt {
         assert!(matches!(value.exp, Expr::Add(_, _)));
     }
 
-    let result = assignment("flag = x < 5").unwrap().1;
+    let result = assignment("flag = x < 5;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "flag")));
     if let Statement::Assign { value, .. } = &result.stmt {
         assert!(matches!(value.exp, Expr::Lt(_, _)));
@@ -314,15 +314,15 @@ fn test_assignment_with_expression() {
 
 #[test]
 fn test_assignment_whitespace() {
-    let result = assignment("x=1").unwrap().1;
+    let result = assignment("x=1;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Ident(ref s) if s == "x") && value.exp == Expr::Literal(Literal::Int(1))));
 
-    let result = assignment("x = 1").unwrap().1;
+    let result = assignment("x = 1;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Ident(ref s) if s == "x") && value.exp == Expr::Literal(Literal::Int(1))));
 
-    let result = assignment("x  =  1").unwrap().1;
+    let result = assignment("x  =  1;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Ident(ref s) if s == "x") && value.exp == Expr::Literal(Literal::Int(1))));
 }
@@ -336,25 +336,25 @@ fn test_invalid_assignment() {
 
 #[test]
 fn test_decl_statement() {
-    let result = statement("int x = 42").unwrap().1;
+    let result = statement("int x = 42;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Decl { ref name, ref ty, .. }
         if name == "x" && ty == &Type::Int));
     if let Statement::Decl { ref init, .. } = result.stmt {
         assert_eq!(init.exp, Expr::Literal(Literal::Int(42)));
     }
 
-    let result = statement("float y = 3.14").unwrap().1;
+    let result = statement("float y = 3.14;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Decl { ref name, ref ty, .. }
         if name == "y" && ty == &Type::Float));
 
-    let result = statement("int[] arr = [1, 2, 3]").unwrap().1;
+    let result = statement("int[] arr = [1, 2, 3];").unwrap().1;
     assert!(matches!(result.stmt, Statement::Decl { ref name, ref ty, .. }
         if name == "arr" && matches!(ty, Type::Array(_))));
 }
 
 #[test]
 fn test_if_without_else() {
-    let result = statement("if x then y = 1").unwrap().1;
+    let result = statement("if x { y = 1; }").unwrap().1;
     assert!(matches!(
         result.stmt,
         Statement::If {
@@ -367,13 +367,16 @@ fn test_if_without_else() {
     } = result.stmt
     {
         assert!(matches!(cond.exp, Expr::Ident(ref s) if s == "x"));
-        assert!(matches!(then_branch.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "y")));
+        assert!(matches!(then_branch.stmt, Statement::Block { ref seq }
+            if seq.len() == 1
+            && matches!(seq[0].stmt, Statement::Assign { ref target, .. }
+                if matches!(target.exp, Expr::Ident(ref s) if s == "y"))));
     }
 }
 
 #[test]
 fn test_if_with_else() {
-    let result = statement("if x then y = 1 else y = 0").unwrap().1;
+    let result = statement("if x { y = 1; } else { y = 0; }").unwrap().1;
     assert!(matches!(
         result.stmt,
         Statement::If {
@@ -383,88 +386,104 @@ fn test_if_with_else() {
     ));
     if let Statement::If { ref else_branch, .. } = &result.stmt {
         let else_s = else_branch.as_ref().unwrap();
-        assert!(matches!(else_s.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "y")));
-        if let Statement::Assign { ref value, .. } = &else_s.stmt {
-            assert_eq!(value.exp, Expr::Literal(Literal::Int(0)));
+        assert!(matches!(else_s.stmt, Statement::Block { ref seq }
+            if seq.len() == 1
+            && matches!(seq[0].stmt, Statement::Assign { ref target, .. }
+                if matches!(target.exp, Expr::Ident(ref s) if s == "y"))));
+        if let Statement::Block { ref seq } = &else_s.stmt {
+            if let Statement::Assign { ref value, .. } = &seq[0].stmt {
+                assert_eq!(value.exp, Expr::Literal(Literal::Int(0)));
+            }
         }
     }
 }
 
 #[test]
 fn test_nested_if() {
-    let result = statement("if a then if b then x = 1 else x = 2").unwrap().1;
+    let result = statement("if a { if b { x = 1; } else { x = 2; } }").unwrap().1;
     assert!(matches!(result.stmt, Statement::If { .. }));
     if let Statement::If { ref then_branch, .. } = &result.stmt {
-        assert!(matches!(then_branch.stmt, Statement::If { .. }));
+        assert!(matches!(then_branch.stmt, Statement::Block { ref seq }
+            if seq.len() == 1 && matches!(seq[0].stmt, Statement::If { .. })));
     }
 }
 
 #[test]
 fn test_if_whitespace() {
-    assert!(statement("if x then y=1").is_ok());
-    assert!(statement("if  x  then  y  =  1").is_ok());
+    assert!(statement("if x { y = 1; }").is_ok());
+    assert!(statement("if  x  { y  =  1; }").is_ok());
 }
 
 #[test]
 fn test_invalid_if() {
     assert!(statement("if x").is_err());
-    assert!(statement("if then x = 1").is_err());
+    assert!(statement("if x y = 1;").is_err());
 }
 
 #[test]
 fn test_simple_while() {
-    let result = statement("while x do y = 1").unwrap().1;
+    let result = statement("while x { y = 1; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::While { .. }));
     if let Statement::While { ref cond, ref body } = &result.stmt {
         assert!(matches!(cond.exp, Expr::Ident(ref s) if s == "x"));
-        assert!(matches!(body.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "y")));
+        assert!(matches!(body.stmt, Statement::Block { ref seq }
+            if seq.len() == 1
+            && matches!(seq[0].stmt, Statement::Assign { ref target, .. }
+                if matches!(target.exp, Expr::Ident(ref s) if s == "y"))));
     }
 }
 
 #[test]
 fn test_while_with_expression() {
-    let result = statement("while i < 10 do i = i + 1").unwrap().1;
+    let result = statement("while i < 10 { i = i + 1; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::While { .. }));
     if let Statement::While { ref cond, ref body } = &result.stmt {
         assert!(matches!(cond.exp, Expr::Lt(_, _)));
-        assert!(matches!(body.stmt, Statement::Assign { .. }));
+        assert!(matches!(body.stmt, Statement::Block { ref seq }
+            if seq.len() == 1 && matches!(seq[0].stmt, Statement::Assign { .. })));
     }
 }
 
 #[test]
 fn test_nested_while() {
-    let result = statement("while a do while b do x = 1").unwrap().1;
+    let result = statement("while a { while b { x = 1; } }").unwrap().1;
     assert!(matches!(result.stmt, Statement::While { .. }));
     if let Statement::While { ref body, .. } = &result.stmt {
-        assert!(matches!(body.stmt, Statement::While { .. }));
+        assert!(matches!(body.stmt, Statement::Block { ref seq }
+            if seq.len() == 1 && matches!(seq[0].stmt, Statement::While { .. })));
     }
 }
 
 #[test]
 fn test_while_whitespace() {
-    assert!(statement("while x do y=1").is_ok());
-    assert!(statement("while  x  do  y  =  1").is_ok());
+    assert!(statement("while x { y = 1; }").is_ok());
+    assert!(statement("while  x  { y  =  1; }").is_ok());
 }
 
 #[test]
 fn test_invalid_while() {
     assert!(statement("while x").is_err());
-    assert!(statement("while do x = 1").is_err());
+    assert!(statement("while x y = 1;").is_err());
 }
 
 // --- Functions ---
 
 #[test]
 fn test_fun_decl_with_params() {
-    let result = fun_decl("void foo(int x, int y) x = x + y").unwrap().1;
+    let result = fun_decl("void foo(int x, int y) { x = x + y; }").unwrap().1;
     assert_eq!(result.name, "foo");
     assert_eq!(
         result.params,
         vec![("x".to_string(), Type::Int), ("y".to_string(), Type::Int)]
     );
-    assert!(matches!(result.body.stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "x")));
-    if let Statement::Assign { ref value, .. } = &result.body.stmt {
-        assert!(matches!(value.exp, Expr::Add(_, _)));
+    assert!(matches!(result.body.stmt, Statement::Block { ref seq }
+        if seq.len() == 1
+        && matches!(seq[0].stmt, Statement::Assign { ref target, .. }
+            if matches!(target.exp, Expr::Ident(ref s) if s == "x"))));
+    if let Statement::Block { ref seq } = &result.body.stmt {
+        if let Statement::Assign { ref value, .. } = &seq[0].stmt {
+            assert!(matches!(value.exp, Expr::Add(_, _)));
+        }
     }
 }
 
@@ -476,11 +495,15 @@ fn test_fun_decl_old_syntax_reject() {
 
 #[test]
 fn test_fun_decl_no_params() {
-    let result = fun_decl("void bar() x = 1").unwrap().1;
+    let result = fun_decl("void bar() { x = 1; }").unwrap().1;
     assert_eq!(result.name, "bar");
     assert!(result.params.is_empty());
     assert!(
-        matches!(result.body.stmt, Statement::Assign { ref target, ref value } if matches!(target.exp, Expr::Ident(ref s) if s == "x") && value.exp == Expr::Literal(Literal::Int(1)))
+        matches!(result.body.stmt, Statement::Block { ref seq }
+            if seq.len() == 1
+            && matches!(seq[0].stmt, Statement::Assign { ref target, ref value }
+                if matches!(target.exp, Expr::Ident(ref s) if s == "x")
+                && value.exp == Expr::Literal(Literal::Int(1))))
     );
 }
 
@@ -518,7 +541,7 @@ fn test_call_in_expression() {
 
 #[test]
 fn test_call_as_statement() {
-    let result = statement("foo(1, 2)").unwrap().1;
+    let result = statement("foo(1, 2);").unwrap().1;
     assert!(
         matches!(result.stmt, Statement::Call { ref name, ref args } if name == "foo" && args.len() == 2)
     );
@@ -534,7 +557,7 @@ fn test_empty_block() {
 
 #[test]
 fn test_block_single_statement() {
-    let result = statement("{ x = 1 }").unwrap().1;
+    let result = statement("{ x = 1; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::Block { ref seq } if seq.len() == 1));
     if let Statement::Block { ref seq } = result.stmt {
         assert!(matches!(seq[0].stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "x")));
@@ -543,7 +566,7 @@ fn test_block_single_statement() {
 
 #[test]
 fn test_block_multiple_statements() {
-    let result = statement("{ x = 1; y = 2 }").unwrap().1;
+    let result = statement("{ x = 1; y = 2; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::Block { ref seq } if seq.len() == 2));
     if let Statement::Block { ref seq } = result.stmt {
         assert!(matches!(seq[0].stmt, Statement::Assign { ref target, .. } if matches!(target.exp, Expr::Ident(ref s) if s == "x")));
@@ -553,7 +576,7 @@ fn test_block_multiple_statements() {
 
 #[test]
 fn test_block_in_function_body() {
-    let result = fun_decl("void foo(int x, int y) { x = x + 1; y = y + 1 }")
+    let result = fun_decl("void foo(int x, int y) { x = x + 1; y = y + 1; }")
         .unwrap()
         .1;
     assert!(matches!(result.body.stmt, Statement::Block { ref seq } if seq.len() == 2));
@@ -561,7 +584,7 @@ fn test_block_in_function_body() {
 
 #[test]
 fn test_block_in_if_body() {
-    let result = statement("if x then { a = 1; b = 2 }").unwrap().1;
+    let result = statement("if x { a = 1; b = 2; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::If { .. }));
     if let Statement::If { ref then_branch, .. } = &result.stmt {
         assert!(matches!(then_branch.stmt, Statement::Block { ref seq } if seq.len() == 2));
@@ -570,7 +593,7 @@ fn test_block_in_if_body() {
 
 #[test]
 fn test_block_in_while_body() {
-    let result = statement("while x do { a = 1; b = 2 }").unwrap().1;
+    let result = statement("while x { a = 1; b = 2; }").unwrap().1;
     assert!(matches!(result.stmt, Statement::While { .. }));
     if let Statement::While { ref body, .. } = &result.stmt {
         assert!(matches!(body.stmt, Statement::Block { ref seq } if seq.len() == 2));
@@ -605,7 +628,7 @@ fn test_index_read() {
 
 #[test]
 fn test_indexed_assignment() {
-    let result = statement("arr[i] = 1").unwrap().1;
+    let result = statement("arr[i] = 1;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Index { .. }) && value.exp == Expr::Literal(Literal::Int(1))));
     if let Statement::Assign { ref target, .. } = result.stmt {
@@ -618,7 +641,7 @@ fn test_indexed_assignment() {
 
 #[test]
 fn test_multidimensional_indexed_assignment() {
-    let result = statement("arr[i][j] = x").unwrap().1;
+    let result = statement("arr[i][j] = x;").unwrap().1;
     assert!(matches!(result.stmt, Statement::Assign { ref target, ref value }
         if matches!(target.exp, Expr::Index { .. }) && matches!(value.exp, Expr::Ident(ref s) if s == "x")));
     if let Statement::Assign { ref target, .. } = result.stmt {

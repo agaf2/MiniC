@@ -91,9 +91,9 @@ executor `exec_stmt` handles each statement form:
 |-----------|-------------|
 | `int x = expr` | Evaluates `expr`, stores the result in the environment as `"x"` |
 | `x = expr` | Evaluates `expr`, updates the existing binding for `"x"` |
-| `{ stmt; stmt; … }` | Executes each statement in order (with block scoping) |
-| `if cond then s1 else s2` | Evaluates `cond`; executes `s1` or `s2` |
-| `while cond do body` | Repeatedly evaluates `cond` and executes `body` |
+| `{ stmt* }` | Executes each statement in order (with block scoping) |
+| `if cond { s1 } else { s2 }` | Evaluates `cond`; executes `s1` or `s2` |
+| `while cond { body }` | Repeatedly evaluates `cond` and executes `body` |
 | `return expr` | Evaluates `expr` and signals an early return |
 | `f(args)` | Evaluates arguments, calls `f`, discards the return value |
 

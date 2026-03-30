@@ -24,8 +24,8 @@ fn test_empty_main() {
 #[test]
 fn test_arithmetic_int() {
     let src = r#"
-        int add(int a, int b) { return a + b }
-        void main() { int r = add(3, 4) }
+        int add(int a, int b) { return a + b; }
+        void main() { int r = add(3, 4); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -33,8 +33,8 @@ fn test_arithmetic_int() {
 #[test]
 fn test_arithmetic_float_coercion() {
     let src = r#"
-        float f() { return 2 + 1.5 }
-        void main() { float r = f() }
+        float f() { return 2 + 1.5; }
+        void main() { float r = f(); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -46,10 +46,10 @@ fn test_arithmetic_float_coercion() {
 fn test_if_true_branch() {
     let src = r#"
         int choose(bool cond) {
-            if cond then { return 1 } else { return 2 };
-            return 0
+            if cond { return 1; } else { return 2; }
+            return 0;
         }
-        void main() { int r = choose(true) }
+        void main() { int r = choose(true); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -58,10 +58,10 @@ fn test_if_true_branch() {
 fn test_if_false_branch() {
     let src = r#"
         int choose(bool cond) {
-            if cond then { return 1 } else { return 2 };
-            return 0
+            if cond { return 1; } else { return 2; }
+            return 0;
         }
-        void main() { int r = choose(false) }
+        void main() { int r = choose(false); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -74,10 +74,10 @@ fn test_while_loop() {
     let src = r#"
         int count_to(int n) {
             int i = 0;
-            while i < n do { i = i + 1 };
-            return i
+            while i < n { i = i + 1; }
+            return i;
         }
-        void main() { int r = count_to(3) }
+        void main() { int r = count_to(3); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -87,7 +87,7 @@ fn test_while_no_iteration() {
     let src = r#"
         void main() {
             int x = 0;
-            while false do { x = 1 }
+            while false { x = 1; }
         }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
@@ -100,10 +100,10 @@ fn test_while_no_iteration() {
 fn test_factorial() {
     let src = r#"
         int factorial(int n) {
-            if n <= 1 then { return 1 };
-            return n * factorial(n - 1)
+            if n <= 1 { return 1; }
+            return n * factorial(n - 1);
         }
-        void main() { int r = factorial(5) }
+        void main() { int r = factorial(5); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -116,7 +116,7 @@ fn test_array_decl_and_index() {
     let src = r#"
         void main() {
             int[] arr = [10, 20, 30];
-            int x = arr[1]
+            int x = arr[1];
         }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
@@ -128,7 +128,7 @@ fn test_array_element_assignment() {
         void main() {
             int[] arr = [1, 2, 3];
             arr[0] = 99;
-            int x = arr[0]
+            int x = arr[0];
         }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
@@ -144,7 +144,7 @@ fn test_nested_array_assignment() {
             int[] row0 = [1, 2];
             int[] row1 = [3, 4];
             int[][] matrix = [row0, row1];
-            matrix[1][0] = 99
+            matrix[1][0] = 99;
         }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
@@ -156,7 +156,7 @@ fn test_nested_array_assignment() {
 #[test]
 fn test_print_int() {
     let src = r#"
-        void main() { print(42) }
+        void main() { print(42); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -164,7 +164,7 @@ fn test_print_int() {
 #[test]
 fn test_print_bool() {
     let src = r#"
-        void main() { print(true) }
+        void main() { print(true); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -172,7 +172,7 @@ fn test_print_bool() {
 #[test]
 fn test_print_array() {
     let src = r#"
-        void main() { print([1, 2, 3]) }
+        void main() { print([1, 2, 3]); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -185,7 +185,7 @@ fn test_out_of_bounds() {
     let src = r#"
         void main() {
             int[] arr = [1, 2];
-            int x = arr[5]
+            int x = arr[5];
         }
     "#;
     let result = run(src);
@@ -202,7 +202,7 @@ fn test_out_of_bounds() {
 #[test]
 fn test_undefined_function() {
     let src = r#"
-        void main() { foo(1) }
+        void main() { foo(1); }
     "#;
     assert!(run(src).is_err(), "expected error for undefined function");
 }
@@ -213,7 +213,7 @@ fn test_undefined_function() {
 #[test]
 fn test_stdlib_sqrt_int_coercion() {
     let src = r#"
-        void main() { float r = sqrt(4) }
+        void main() { float r = sqrt(4); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -224,7 +224,7 @@ fn test_stdlib_sqrt_int_coercion() {
 #[test]
 fn test_stdlib_pow_int_args() {
     let src = r#"
-        void main() { float r = pow(2, 10) }
+        void main() { float r = pow(2, 10); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
@@ -238,9 +238,9 @@ fn test_stdlib_read_fns_type_check() {
     // we don't call them at runtime (call sites are inside dead branches).
     let src = r#"
         void main() {
-            if false then { int x = readInt() };
-            if false then { float x = readFloat() };
-            if false then { str x = readString() }
+            if false { int x = readInt(); }
+            if false { float x = readFloat(); }
+            if false { str x = readString(); }
         }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
@@ -252,7 +252,7 @@ fn test_stdlib_read_fns_type_check() {
 #[test]
 fn test_stdlib_pow_float_args() {
     let src = r#"
-        void main() { float r = pow(2.0, 3.0) }
+        void main() { float r = pow(2.0, 3.0); }
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }

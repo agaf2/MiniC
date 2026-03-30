@@ -6,15 +6,14 @@ interpreter — is intentionally small so you can read and understand every part
 of it. A complete MiniC program looks like this:
 
 ```c
-int factorial(int n)
-  if n <= 1 then
-    return 1
-  else
-    return n * factorial(n - 1)
+int factorial(int n) {
+  if n <= 1 { return 1; }
+  return n * factorial(n - 1);
+}
 
 void main() {
   int result = factorial(10);
-  print(result)
+  print(result);
 }
 ```
 
