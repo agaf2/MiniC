@@ -60,6 +60,7 @@
 //! here (rather than in `stdlib`) to avoid a circular dependency: `stdlib`
 //! needs `Value`, and `Value` needs to reference the callable type.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ir::ast::CheckedFunDecl;
@@ -103,6 +104,11 @@ pub enum Value {
     Array(Vec<Value>),
     Void,
     Fn(FnValue),
+    /// A struct instance: its type name and a map of field values.
+    Struct {
+        name: String,
+        fields: HashMap<String, Value>,
+    },
 }
 
 impl fmt::Display for Value {
@@ -124,6 +130,16 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Fn(_) => write!(f, "<function>"),
+            Value::Struct { name, fields } => {
+                write!(f, "{} {{", name)?;
+                let mut sorted: Vec<_> = fields.iter().collect();
+                sorted.sort_by_key(|(k, _)| k.as_str());
+                for (i, (k, v)) in sorted.iter().enumerate() {
+                    if i > 0 { write!(f, ",")?; }
+                    write!(f, " {}: {}", k, v)?;
+                }
+                write!(f, " }}")
+            }
         }
     }
 }

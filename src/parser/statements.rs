@@ -160,32 +160,37 @@ fn while_statement(input: &str) -> IResult<&str, UncheckedStmt> {
     ))
 }
 
-/// Parse an lvalue: identifier followed by zero or more `[ expr ]` suffixes.
+/// Parse an lvalue: identifier followed by zero or more `[ expr ]` or `.field` suffixes.
 fn lvalue(input: &str) -> IResult<&str, UncheckedExpr> {
     let (mut rest, id) = preceded(multispace0, identifier)(input)?;
-    let mut acc = ExprD {
-        exp: Expr::Ident(id.to_string()),
-        ty: (),
-    };
+    let mut acc = ExprD { exp: Expr::Ident(id.to_string()), ty: () };
     loop {
         let index_parse = delimited(
             preceded(multispace0, char('[')),
             preceded(multispace0, expression),
             preceded(multispace0, char(']')),
         )(rest);
-        match index_parse {
-            Ok((r, index)) => {
-                acc = ExprD {
-                    exp: Expr::Index {
-                        base: Box::new(acc),
-                        index: Box::new(index),
-                    },
-                    ty: (),
-                };
-                rest = r;
-            }
-            Err(_) => break,
+        if let Ok((r, index)) = index_parse {
+            acc = ExprD {
+                exp: Expr::Index { base: Box::new(acc), index: Box::new(index) },
+                ty: (),
+            };
+            rest = r;
+            continue;
         }
+        let field_parse = preceded(
+            preceded(multispace0, char('.')),
+            preceded(multispace0, crate::parser::identifiers::identifier),
+        )(rest);
+        if let Ok((r, field_name)) = field_parse {
+            acc = ExprD {
+                exp: Expr::FieldAccess { base: Box::new(acc), field: field_name.to_string() },
+                ty: (),
+            };
+            rest = r;
+            continue;
+        }
+        break;
     }
     Ok((rest, acc))
 }

@@ -39,6 +39,8 @@
 //! returns normally or early. See [`Environment`]
 //! for more detail on this mechanism.
 
+use std::collections::HashMap;
+
 use crate::environment::Environment;
 use crate::ir::ast::{CheckedExpr, Expr, Literal};
 
@@ -146,6 +148,27 @@ pub fn eval_expr(expr: &CheckedExpr, env: &mut Environment<Value>) -> Result<Val
             let arg_vals: Result<Vec<Value>, RuntimeError> =
                 args.iter().map(|a| eval_expr(a, env)).collect();
             eval_call(name, arg_vals?, env)
+        }
+
+        Expr::StructLit { name, fields } => {
+            let mut field_values = HashMap::new();
+            for (fname, fexpr) in fields {
+                field_values.insert(fname.clone(), eval_expr(fexpr, env)?);
+            }
+            Ok(Value::Struct { name: name.clone(), fields: field_values })
+        }
+
+        Expr::FieldAccess { base, field } => {
+            match eval_expr(base, env)? {
+                Value::Struct { fields, .. } => fields
+                    .get(field)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new(format!("struct has no field '{}'", field))),
+                v => Err(RuntimeError::new(format!(
+                    "field access on non-struct value: {}",
+                    v
+                ))),
+            }
         }
     }
 }

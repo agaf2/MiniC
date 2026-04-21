@@ -48,7 +48,7 @@
 //! compatibility check (`types_compatible`) treats `Any` as matching
 //! everything, keeping the special case local to one function.
 
-/// MiniC types: scalar, array, function, and Any (for polymorphic native params).
+/// MiniC types: scalar, array, function, Any (for polymorphic native params), and user-defined structs.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Unit,
@@ -60,6 +60,18 @@ pub enum Type {
     Fun(Vec<Type>, Box<Type>),
     /// Matches any type. Only used as a parameter type in native stdlib registrations.
     Any,
+    /// A user-defined struct type, identified by name.
+    Struct(String),
+}
+
+/// A named field in a struct definition: (field_name, field_type).
+pub type StructField = (String, Type);
+
+/// A struct type definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
 }
 
 /// A literal value.
@@ -109,6 +121,16 @@ pub enum Expr<Ty> {
     Index {
         base: Box<ExprD<Ty>>,
         index: Box<ExprD<Ty>>,
+    },
+    /// Struct literal: `StructName { field: expr, ... }`
+    StructLit {
+        name: String,
+        fields: Vec<(String, ExprD<Ty>)>,
+    },
+    /// Field access: `expr.field`
+    FieldAccess {
+        base: Box<ExprD<Ty>>,
+        field: String,
     },
 }
 
@@ -165,9 +187,10 @@ pub struct FunDecl<Ty> {
     pub body: Box<StatementD<Ty>>,
 }
 
-/// A complete MiniC program: function declarations only. Execution starts at `main`.
+/// A complete MiniC program: struct definitions and function declarations. Execution starts at `main`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program<Ty> {
+    pub structs: Vec<StructDef>,
     pub functions: Vec<FunDecl<Ty>>,
 }
 

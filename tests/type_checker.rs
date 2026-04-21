@@ -202,3 +202,89 @@ fn test_type_check_print_wrong_arity() {
     let result = parse_and_type_check("void main() { print(1, 2); }");
     assert!(result.is_err(), "expected arity error for print(1, 2)");
 }
+
+// ---------------------------------------------------------------------------
+// Struct types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_type_check_struct_decl_and_literal() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 0, y: 1 }; }";
+    assert!(parse_and_type_check(src).is_ok());
+}
+
+#[test]
+fn test_type_check_struct_field_read() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 3, y: 4 }; int v = p.x; }";
+    assert!(parse_and_type_check(src).is_ok());
+}
+
+#[test]
+fn test_type_check_struct_field_assign() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 0, y: 0 }; p.x = 42; }";
+    assert!(parse_and_type_check(src).is_ok());
+}
+
+#[test]
+fn test_type_check_struct_unknown_type() {
+    let src = "void main() { Foo f = Foo { x: 1 }; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("unknown struct type"));
+}
+
+#[test]
+fn test_type_check_struct_wrong_field_name() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { a: 0, b: 1 }; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.to_lowercase().contains("field"));
+}
+
+#[test]
+fn test_type_check_struct_wrong_field_type() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: true, y: 1 }; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("field"));
+}
+
+#[test]
+fn test_type_check_struct_wrong_field_count() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 0 }; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("field"));
+}
+
+#[test]
+fn test_type_check_struct_field_access_on_non_struct() {
+    let src = "void main() { int x = 1; int v = x.foo; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("non-struct"));
+}
+
+#[test]
+fn test_type_check_struct_unknown_field_access() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 0, y: 0 }; int v = p.z; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("no field"));
+}
+
+#[test]
+fn test_type_check_struct_duplicate_definition() {
+    let src = "struct Foo { int x; } struct Foo { int y; } void main() {}";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("duplicate struct"));
+}
+
+#[test]
+fn test_type_check_struct_field_assignment_type_mismatch() {
+    let src = "struct Point { int x; int y; } void main() { Point p = Point { x: 0, y: 0 }; p.x = true; }";
+    let result = parse_and_type_check(src);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("field"));
+}

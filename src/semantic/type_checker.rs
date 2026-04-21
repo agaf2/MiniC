@@ -20,6 +20,14 @@
 //! as `Type::Fun(param_types, return_type)`, so the same lookup mechanism
 //! handles both variable and function name resolution.
 //!
+//! ## Struct definition registry
+//!
+//! Struct definitions are stored in a separate `HashMap<String, StructDef>`
+//! built once at the top of `type_check` and passed as an immutable reference
+//! to all helpers. This keeps it out of the `Environment<Type>`, which is
+//! scoped and snapshot/restored per function call. The struct registry is
+//! global and never changes after it is built.
+//!
 //! ## Function signatures registered before bodies are checked
 //!
 //! All function signatures are added to the environment before any function
@@ -49,8 +57,8 @@ use std::collections::HashMap;
 use crate::environment::Environment;
 use crate::ir::ast::{
     CheckedExpr, CheckedFunDecl, CheckedProgram, CheckedStmt, Expr, ExprD, FunDecl, Literal,
-    Program, Statement, StatementD, Type, UncheckedExpr, UncheckedFunDecl, UncheckedProgram,
-    UncheckedStmt,
+    Program, Statement, StatementD, StructDef, Type, UncheckedExpr, UncheckedFunDecl,
+    UncheckedProgram, UncheckedStmt,
 };
 use crate::stdlib::NativeRegistry;
 
@@ -92,6 +100,31 @@ pub fn type_check(program: &UncheckedProgram) -> Result<CheckedProgram, TypeErro
         }
     }
 
+    // Build the struct definition registry, checking for duplicates and invalid field types.
+    let mut struct_defs: HashMap<String, StructDef> = HashMap::new();
+    for sd in &program.structs {
+        if struct_defs.contains_key(&sd.name) {
+            return Err(TypeError::new(format!("duplicate struct definition: {}", sd.name)));
+        }
+        for (fname, fty) in &sd.fields {
+            if fty == &Type::Unit {
+                return Err(TypeError::new(format!(
+                    "field '{}' in struct '{}' cannot have type void",
+                    fname, sd.name
+                )));
+            }
+            if let Type::Struct(sname) = fty {
+                if !struct_defs.contains_key(sname) {
+                    return Err(TypeError::new(format!(
+                        "unknown struct type '{}' in field '{}' of struct '{}'",
+                        sname, fname, sd.name
+                    )));
+                }
+            }
+        }
+        struct_defs.insert(sd.name.clone(), sd.clone());
+    }
+
     let mut env = Environment::<Type>::new();
 
     // Register native stdlib functions as Type::Fun bindings.
@@ -114,23 +147,24 @@ pub fn type_check(program: &UncheckedProgram) -> Result<CheckedProgram, TypeErro
 
     let mut functions = Vec::new();
     for f in &program.functions {
-        let checked = type_check_fun_decl(f, &mut env, &fn_snapshot)?;
+        let checked = type_check_fun_decl(f, &mut env, &fn_snapshot, &struct_defs)?;
         functions.push(checked);
     }
-    Ok(Program { functions })
+    Ok(Program { structs: program.structs.clone(), functions })
 }
 
 fn type_check_fun_decl(
     f: &UncheckedFunDecl,
     env: &mut Environment<Type>,
     fn_snapshot: &HashMap<String, Type>,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<CheckedFunDecl, TypeError> {
     // Restore to clean function-only state, then add parameters.
     env.restore(fn_snapshot.clone());
     for (name, ty) in &f.params {
         env.declare(name.clone(), ty.clone());
     }
-    let body = type_check_stmt(&f.body, env, &f.return_type)?;
+    let body = type_check_stmt(&f.body, env, &f.return_type, struct_defs)?;
     Ok(FunDecl {
         name: f.name.clone(),
         params: f.params.clone(),
@@ -143,16 +177,22 @@ fn type_check_stmt(
     s: &UncheckedStmt,
     env: &mut Environment<Type>,
     expected_return: &Type,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<CheckedStmt, TypeError> {
     let stmt = match &s.stmt {
         Statement::Decl { name, ty, init } => {
             if ty == &Type::Unit {
                 return Err(TypeError::new("cannot declare variable of type void"));
             }
+            if let Type::Struct(sname) = ty {
+                if !struct_defs.contains_key(sname) {
+                    return Err(TypeError::new(format!("unknown struct type '{}'", sname)));
+                }
+            }
             if env.get(name).is_some() {
                 return Err(TypeError::new(format!("redeclaration of variable: {}", name)));
             }
-            let init_checked = type_check_expr_to_typed(init, env)?;
+            let init_checked = type_check_expr_to_typed(init, env, struct_defs)?;
             if !types_compatible(&init_checked.ty, ty) {
                 return Err(TypeError::new(format!(
                     "declaration of {}: expected {:?}, got {:?}",
@@ -167,10 +207,10 @@ fn type_check_stmt(
             }
         }
         Statement::Assign { target, value } => {
-            let value_checked = type_check_expr_to_typed(value, env)?;
-            type_check_assign_target(&target.exp, &value_checked.ty, env)?;
+            let value_checked = type_check_expr_to_typed(value, env, struct_defs)?;
+            type_check_assign_target(&target.exp, &value_checked.ty, env, struct_defs)?;
             Statement::Assign {
-                target: Box::new(type_check_expr_to_typed(target, env)?),
+                target: Box::new(type_check_expr_to_typed(target, env, struct_defs)?),
                 value: Box::new(value_checked),
             }
         }
@@ -178,7 +218,7 @@ fn type_check_stmt(
             let snapshot = env.snapshot();
             let mut checked = Vec::new();
             for st in seq {
-                checked.push(type_check_stmt(st, env, expected_return)?);
+                checked.push(type_check_stmt(st, env, expected_return, struct_defs)?);
             }
             env.restore(snapshot);
             Statement::Block { seq: checked }
@@ -186,7 +226,7 @@ fn type_check_stmt(
         Statement::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> = args
                 .iter()
-                .map(|a| type_check_expr_to_typed(a, env))
+                .map(|a| type_check_expr_to_typed(a, env, struct_defs))
                 .collect();
             let args_checked = args_checked?;
             check_call(name, &args_checked, env)?;
@@ -200,17 +240,17 @@ fn type_check_stmt(
             then_branch,
             else_branch,
         } => {
-            let cond_checked = type_check_expr_to_typed(cond, env)?;
+            let cond_checked = type_check_expr_to_typed(cond, env, struct_defs)?;
             if cond_checked.ty != Type::Bool {
                 return Err(TypeError::new(format!(
                     "if condition must be Bool, got {:?}",
                     cond_checked.ty
                 )));
             }
-            let then_checked = type_check_stmt(then_branch, env, expected_return)?;
+            let then_checked = type_check_stmt(then_branch, env, expected_return, struct_defs)?;
             let else_checked = else_branch
                 .as_ref()
-                .map(|e| type_check_stmt(e, env, expected_return))
+                .map(|e| type_check_stmt(e, env, expected_return, struct_defs))
                 .transpose()?;
             Statement::If {
                 cond: Box::new(cond_checked),
@@ -219,14 +259,14 @@ fn type_check_stmt(
             }
         }
         Statement::While { cond, body } => {
-            let cond_checked = type_check_expr_to_typed(cond, env)?;
+            let cond_checked = type_check_expr_to_typed(cond, env, struct_defs)?;
             if cond_checked.ty != Type::Bool {
                 return Err(TypeError::new(format!(
                     "while condition must be Bool, got {:?}",
                     cond_checked.ty
                 )));
             }
-            let body_checked = type_check_stmt(body, env, expected_return)?;
+            let body_checked = type_check_stmt(body, env, expected_return, struct_defs)?;
             Statement::While {
                 cond: Box::new(cond_checked),
                 body: Box::new(body_checked),
@@ -246,7 +286,7 @@ fn type_check_stmt(
                 if *expected_return == Type::Unit {
                     return Err(TypeError::new("void function must not return a value"));
                 }
-                let checked = type_check_expr_to_typed(e, env)?;
+                let checked = type_check_expr_to_typed(e, env, struct_defs)?;
                 if !types_compatible(&checked.ty, expected_return) {
                     return Err(TypeError::new(format!(
                         "return type mismatch: expected {:?}, got {:?}",
@@ -300,6 +340,7 @@ fn type_check_assign_target(
     target: &Expr<()>,
     value_ty: &Type,
     env: &Environment<Type>,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<(), TypeError> {
     match target {
         Expr::Ident(name) => {
@@ -315,11 +356,11 @@ fn type_check_assign_target(
             Ok(())
         }
         Expr::Index { base, index } => {
-            let index_ty = type_check_expr(index, env)?;
+            let index_ty = type_check_expr(index, env, struct_defs)?;
             if index_ty != Type::Int {
                 return Err(TypeError::new("array index must be Int"));
             }
-            let base_ty = type_check_expr(base, env)?;
+            let base_ty = type_check_expr(base, env, struct_defs)?;
             if let Type::Array(elem) = &base_ty {
                 if **elem != *value_ty {
                     return Err(TypeError::new("assignment type mismatch"));
@@ -329,6 +370,44 @@ fn type_check_assign_target(
             }
             Ok(())
         }
+        Expr::FieldAccess { base, field } => {
+            // Only allow Ident base — no nested struct assignment.
+            if !matches!(base.exp, Expr::Ident(_)) {
+                return Err(TypeError::new(
+                    "field assignment only supported on simple variables, not expressions",
+                ));
+            }
+            let base_ty = type_check_expr(base, env, struct_defs)?;
+            match base_ty {
+                Type::Struct(sname) => {
+                    let sd = struct_defs.get(&sname).ok_or_else(|| {
+                        TypeError::new(format!("unknown struct type '{}'", sname))
+                    })?;
+                    let field_ty = sd
+                        .fields
+                        .iter()
+                        .find(|(n, _)| n == field)
+                        .map(|(_, t)| t)
+                        .ok_or_else(|| {
+                            TypeError::new(format!(
+                                "struct '{}' has no field '{}'",
+                                sname, field
+                            ))
+                        })?;
+                    if !types_compatible(value_ty, field_ty) {
+                        return Err(TypeError::new(format!(
+                            "field '{}': expected {:?}, got {:?}",
+                            field, field_ty, value_ty
+                        )));
+                    }
+                    Ok(())
+                }
+                other => Err(TypeError::new(format!(
+                    "field assignment on non-struct type {:?}",
+                    other
+                ))),
+            }
+        }
         _ => Err(TypeError::new("invalid assignment target")),
     }
 }
@@ -336,72 +415,74 @@ fn type_check_assign_target(
 fn type_check_expr_to_typed(
     e: &UncheckedExpr,
     env: &Environment<Type>,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<CheckedExpr, TypeError> {
-    let ty = type_check_expr(e, env)?;
-    let exp = type_check_expr_inner(&e.exp, env)?;
+    let ty = type_check_expr(e, env, struct_defs)?;
+    let exp = type_check_expr_inner(&e.exp, env, struct_defs)?;
     Ok(ExprD { exp, ty })
 }
 
 fn type_check_expr_inner(
     e: &Expr<()>,
     env: &Environment<Type>,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<Expr<Type>, TypeError> {
     match e {
         Expr::Literal(l) => Ok(Expr::Literal(l.clone())),
         Expr::Ident(name) => Ok(Expr::Ident(name.clone())),
-        Expr::Neg(inner) => Ok(Expr::Neg(Box::new(type_check_expr_to_typed(inner, env)?))),
+        Expr::Neg(inner) => Ok(Expr::Neg(Box::new(type_check_expr_to_typed(inner, env, struct_defs)?))),
         Expr::Add(l, r) => Ok(Expr::Add(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Sub(l, r) => Ok(Expr::Sub(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Mul(l, r) => Ok(Expr::Mul(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Div(l, r) => Ok(Expr::Div(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Eq(l, r) => Ok(Expr::Eq(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Ne(l, r) => Ok(Expr::Ne(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Lt(l, r) => Ok(Expr::Lt(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Le(l, r) => Ok(Expr::Le(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Gt(l, r) => Ok(Expr::Gt(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Ge(l, r) => Ok(Expr::Ge(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
-        Expr::Not(inner) => Ok(Expr::Not(Box::new(type_check_expr_to_typed(inner, env)?))),
+        Expr::Not(inner) => Ok(Expr::Not(Box::new(type_check_expr_to_typed(inner, env, struct_defs)?))),
         Expr::And(l, r) => Ok(Expr::And(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Or(l, r) => Ok(Expr::Or(
-            Box::new(type_check_expr_to_typed(l, env)?),
-            Box::new(type_check_expr_to_typed(r, env)?),
+            Box::new(type_check_expr_to_typed(l, env, struct_defs)?),
+            Box::new(type_check_expr_to_typed(r, env, struct_defs)?),
         )),
         Expr::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> =
-                args.iter().map(|a| type_check_expr_to_typed(a, env)).collect();
+                args.iter().map(|a| type_check_expr_to_typed(a, env, struct_defs)).collect();
             Ok(Expr::Call {
                 name: name.clone(),
                 args: args_checked?,
@@ -409,12 +490,26 @@ fn type_check_expr_inner(
         }
         Expr::ArrayLit(elems) => {
             let elems_checked: Result<Vec<_>, _> =
-                elems.iter().map(|e| type_check_expr_to_typed(e, env)).collect();
+                elems.iter().map(|e| type_check_expr_to_typed(e, env, struct_defs)).collect();
             Ok(Expr::ArrayLit(elems_checked?))
         }
         Expr::Index { base, index } => Ok(Expr::Index {
-            base: Box::new(type_check_expr_to_typed(base, env)?),
-            index: Box::new(type_check_expr_to_typed(index, env)?),
+            base: Box::new(type_check_expr_to_typed(base, env, struct_defs)?),
+            index: Box::new(type_check_expr_to_typed(index, env, struct_defs)?),
+        }),
+        Expr::StructLit { name, fields } => {
+            let fields_checked: Result<Vec<_>, _> = fields
+                .iter()
+                .map(|(fname, fexpr)| {
+                    type_check_expr_to_typed(fexpr, env, struct_defs)
+                        .map(|checked| (fname.clone(), checked))
+                })
+                .collect();
+            Ok(Expr::StructLit { name: name.clone(), fields: fields_checked? })
+        }
+        Expr::FieldAccess { base, field } => Ok(Expr::FieldAccess {
+            base: Box::new(type_check_expr_to_typed(base, env, struct_defs)?),
+            field: field.clone(),
         }),
     }
 }
@@ -422,6 +517,7 @@ fn type_check_expr_inner(
 fn type_check_expr(
     e: &UncheckedExpr,
     env: &Environment<Type>,
+    struct_defs: &HashMap<String, StructDef>,
 ) -> Result<Type, TypeError> {
     match &e.exp {
         Expr::Literal(l) => Ok(literal_type(l)),
@@ -434,7 +530,7 @@ fn type_check_expr(
             None => Err(TypeError::new(format!("undeclared variable: {}", name))),
         },
         Expr::Neg(inner) => {
-            let ty = type_check_expr(inner, env)?;
+            let ty = type_check_expr(inner, env, struct_defs)?;
             if matches!(ty, Type::Int | Type::Float) {
                 Ok(ty)
             } else {
@@ -442,13 +538,13 @@ fn type_check_expr(
             }
         }
         Expr::Add(l, r) | Expr::Sub(l, r) | Expr::Mul(l, r) | Expr::Div(l, r) => {
-            let lt = type_check_expr(l, env)?;
-            let rt = type_check_expr(r, env)?;
+            let lt = type_check_expr(l, env, struct_defs)?;
+            let rt = type_check_expr(r, env, struct_defs)?;
             numeric_binop_result(&lt, &rt)
         }
         Expr::Eq(l, r) | Expr::Ne(l, r) => {
-            let lt = type_check_expr(l, env)?;
-            let rt = type_check_expr(r, env)?;
+            let lt = type_check_expr(l, env, struct_defs)?;
+            let rt = type_check_expr(r, env, struct_defs)?;
             if !types_compatible(&lt, &rt) {
                 return Err(TypeError::new(format!(
                     "equality operands must have compatible types, got {:?} and {:?}",
@@ -458,8 +554,8 @@ fn type_check_expr(
             Ok(Type::Bool)
         }
         Expr::Lt(l, r) | Expr::Le(l, r) | Expr::Gt(l, r) | Expr::Ge(l, r) => {
-            let lt = type_check_expr(l, env)?;
-            let rt = type_check_expr(r, env)?;
+            let lt = type_check_expr(l, env, struct_defs)?;
+            let rt = type_check_expr(r, env, struct_defs)?;
             if !is_numeric(&lt) || !is_numeric(&rt) {
                 return Err(TypeError::new(format!(
                     "ordering comparison requires numeric operands, got {:?} and {:?}",
@@ -469,7 +565,7 @@ fn type_check_expr(
             Ok(Type::Bool)
         }
         Expr::Not(inner) => {
-            let ty = type_check_expr(inner, env)?;
+            let ty = type_check_expr(inner, env, struct_defs)?;
             if ty == Type::Bool {
                 Ok(Type::Bool)
             } else {
@@ -477,8 +573,8 @@ fn type_check_expr(
             }
         }
         Expr::And(l, r) | Expr::Or(l, r) => {
-            let lt = type_check_expr(l, env)?;
-            let rt = type_check_expr(r, env)?;
+            let lt = type_check_expr(l, env, struct_defs)?;
+            let rt = type_check_expr(r, env, struct_defs)?;
             if lt == Type::Bool && rt == Type::Bool {
                 Ok(Type::Bool)
             } else {
@@ -487,7 +583,7 @@ fn type_check_expr(
         }
         Expr::Call { name, args } => {
             let args_checked: Result<Vec<_>, _> =
-                args.iter().map(|a| type_check_expr_to_typed(a, env)).collect();
+                args.iter().map(|a| type_check_expr_to_typed(a, env, struct_defs)).collect();
             let args_checked = args_checked?;
             match env.get(name) {
                 Some(Type::Fun(param_tys, return_ty)) => {
@@ -522,9 +618,9 @@ fn type_check_expr(
             if elems.is_empty() {
                 return Err(TypeError::new("empty array literal needs type annotation"));
             }
-            let first = type_check_expr(&elems[0], env)?;
+            let first = type_check_expr(&elems[0], env, struct_defs)?;
             for e in elems.iter().skip(1) {
-                let ty = type_check_expr(e, env)?;
+                let ty = type_check_expr(e, env, struct_defs)?;
                 if !types_compatible(&first, &ty) {
                     return Err(TypeError::new("array elements must have same type"));
                 }
@@ -532,15 +628,70 @@ fn type_check_expr(
             Ok(Type::Array(Box::new(first)))
         }
         Expr::Index { base, index } => {
-            let index_ty = type_check_expr(index, env)?;
+            let index_ty = type_check_expr(index, env, struct_defs)?;
             if index_ty != Type::Int {
                 return Err(TypeError::new("array index must be Int"));
             }
-            let base_ty = type_check_expr(base, env)?;
+            let base_ty = type_check_expr(base, env, struct_defs)?;
             if let Type::Array(elem) = base_ty {
                 Ok(*elem)
             } else {
                 Err(TypeError::new("indexed expression must be array"))
+            }
+        }
+        Expr::StructLit { name, fields } => {
+            let sd = struct_defs.get(name).ok_or_else(|| {
+                TypeError::new(format!("unknown struct type '{}'", name))
+            })?;
+            if fields.len() != sd.fields.len() {
+                return Err(TypeError::new(format!(
+                    "struct '{}' has {} fields but literal provides {}",
+                    name,
+                    sd.fields.len(),
+                    fields.len()
+                )));
+            }
+            for (fname, fexpr) in fields {
+                let expected_ty = sd
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == fname)
+                    .map(|(_, t)| t)
+                    .ok_or_else(|| {
+                        TypeError::new(format!("unknown field '{}' on struct '{}'", fname, name))
+                    })?;
+                let actual_ty = type_check_expr(fexpr, env, struct_defs)?;
+                if !types_compatible(&actual_ty, expected_ty) {
+                    return Err(TypeError::new(format!(
+                        "field '{}': expected {:?}, got {:?}",
+                        fname, expected_ty, actual_ty
+                    )));
+                }
+            }
+            Ok(Type::Struct(name.clone()))
+        }
+        Expr::FieldAccess { base, field } => {
+            let base_ty = type_check_expr(base, env, struct_defs)?;
+            match base_ty {
+                Type::Struct(sname) => {
+                    let sd = struct_defs.get(&sname).ok_or_else(|| {
+                        TypeError::new(format!("unknown struct type '{}'", sname))
+                    })?;
+                    sd.fields
+                        .iter()
+                        .find(|(n, _)| n == field)
+                        .map(|(_, t)| t.clone())
+                        .ok_or_else(|| {
+                            TypeError::new(format!(
+                                "struct '{}' has no field '{}'",
+                                sname, field
+                            ))
+                        })
+                }
+                other => Err(TypeError::new(format!(
+                    "field access on non-struct type {:?}",
+                    other
+                ))),
             }
         }
     }
@@ -580,6 +731,7 @@ fn types_compatible(a: &Type, b: &Type) -> bool {
         | (Type::Unit, Type::Unit) => true,
         (Type::Int, Type::Float) | (Type::Float, Type::Int) => true,
         (Type::Array(a), Type::Array(b)) => types_compatible(a, b),
+        (Type::Struct(a), Type::Struct(b)) => a == b,
         _ => false,
     }
 }
