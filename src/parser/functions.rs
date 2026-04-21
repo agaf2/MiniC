@@ -53,6 +53,9 @@ pub fn type_name(input: &str) -> IResult<&str, Type> {
             map(tag("bool"), |_| Type::Bool),
             map(tag("str"), |_| Type::Str),
             map(tag("void"), |_| Type::Unit),
+            // Fallback: any non-reserved identifier is treated as a struct type name.
+            // The type checker validates that the name refers to a defined struct.
+            map(identifier, |s: &str| Type::Struct(s.to_string())),
         )),
     )(input)
 }

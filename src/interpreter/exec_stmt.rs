@@ -158,6 +158,37 @@ fn assign_lvalue(
             };
             assign_index(base, idx, val, env)
         }
+        Expr::FieldAccess { base, field } => {
+            // Only single-level field assignment: `variable.field = val`.
+            match &base.exp {
+                Expr::Ident(var_name) => {
+                    let struct_val = env
+                        .get(var_name)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new(format!("undefined variable '{}'", var_name)))?;
+                    match struct_val {
+                        Value::Struct { name, mut fields } => {
+                            if !fields.contains_key(field.as_str()) {
+                                return Err(RuntimeError::new(format!(
+                                    "struct '{}' has no field '{}'",
+                                    name, field
+                                )));
+                            }
+                            fields.insert(field.clone(), val);
+                            env.set(var_name, Value::Struct { name, fields });
+                            Ok(())
+                        }
+                        other => Err(RuntimeError::new(format!(
+                            "field assignment on non-struct value: {}",
+                            other
+                        ))),
+                    }
+                }
+                _ => Err(RuntimeError::new(
+                    "field assignment only supported on simple variables".to_string(),
+                )),
+            }
+        }
         _ => Err(RuntimeError::new("invalid assignment target".to_string())),
     }
 }

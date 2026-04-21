@@ -256,3 +256,77 @@ fn test_stdlib_pow_float_args() {
     "#;
     assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
 }
+
+// ---------------------------------------------------------------------------
+// Struct types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_struct_create_and_field_read() {
+    let src = r#"
+        struct Point { int x; int y; }
+        void main() {
+            Point p = Point { x: 10, y: 20 };
+            print(p.x);
+        }
+    "#;
+    assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
+}
+
+#[test]
+fn test_struct_field_mutate() {
+    // The spec example: create Point, mutate x, print x should yield 42.
+    let src = r#"
+        struct Point { int x; int y; }
+        void main() {
+            Point p = Point { x: 0, y: 1 };
+            p.x = 42;
+            print(p.x);
+        }
+    "#;
+    assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
+}
+
+#[test]
+fn test_struct_multiple_fields() {
+    let src = r#"
+        struct Person { int age; bool active; str name; }
+        void main() {
+            Person alice = Person { age: 30, active: true, name: "Alice" };
+            print(alice.age);
+            print(alice.active);
+            print(alice.name);
+        }
+    "#;
+    assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
+}
+
+#[test]
+fn test_struct_passed_to_function() {
+    let src = r#"
+        struct Box { int value; }
+        int get_value(Box b) { return b.value; }
+        void main() {
+            Box b = Box { value: 99 };
+            int v = get_value(b);
+            print(v);
+        }
+    "#;
+    assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
+}
+
+#[test]
+fn test_struct_field_assign_does_not_affect_copy() {
+    // Structs are passed by value — mutating the local copy inside a function
+    // does not change the caller's variable.
+    let src = r#"
+        struct Box { int value; }
+        void mutate(Box b) { b.value = 100; }
+        void main() {
+            Box b = Box { value: 1 };
+            mutate(b);
+            print(b.value);
+        }
+    "#;
+    assert!(run(src).is_ok(), "{}", run(src).unwrap_err());
+}
