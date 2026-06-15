@@ -29,7 +29,7 @@ use nom::{
 
 /// Reserved words: boolean literals and type names.
 const RESERVED: &[&str] = &[
-    "true", "false", "int", "float", "bool", "str", "void", "return", "assert", "test",
+    "true", "false", "int", "float", "bool", "str", "void", "return", "assert", "test", "struct",
 ];
 
 /// Parse an identifier (variable name).

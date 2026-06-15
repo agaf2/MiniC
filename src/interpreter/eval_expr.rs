@@ -147,6 +147,12 @@ pub fn eval_expr(expr: &CheckedExpr, env: &mut Environment<Value>) -> Result<Val
                 args.iter().map(|a| eval_expr(a, env)).collect();
             eval_call(name, arg_vals?, env)
         }
+        Expr::StructLit { .. } => Err(RuntimeError::new(
+            "struct literals not yet supported by the interpreter (Project 1, Part 3 pending)",
+        )),
+        Expr::FieldAccess { .. } => Err(RuntimeError::new(
+            "field access not yet supported by the interpreter (Project 1, Part 3 pending)",
+        )),
     }
 }
 

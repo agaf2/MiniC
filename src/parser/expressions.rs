@@ -41,7 +41,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, multispace0},
-    combinator::map,
+    combinator::{map, opt},
     multi::separated_list0,
     sequence::{delimited, pair, preceded, tuple},
     IResult,
@@ -65,9 +65,39 @@ pub fn parse_call(input: &str) -> IResult<&str, (String, Vec<UncheckedExpr>)> {
     Ok((rest, (name.to_string(), args)))
 }
 
-/// Atom: literal, call, array literal, identifier, or parenthesized expression.
+/// Parse a single `field: expr` initializer inside a struct literal.
+fn struct_field_init(input: &str) -> IResult<&str, (String, UncheckedExpr)> {
+    map(
+        tuple((
+            preceded(multispace0, identifier),
+            preceded(multispace0, char(':')),
+            preceded(multispace0, expression),
+        )),
+        |(name, _, val)| (name.to_string(), val),
+    )(input)
+}
+
+/// Parse a struct literal: `StructName { field: expr, ... }`.
+/// Fails fast (before consuming any input) if no `{` follows the identifier,
+/// allowing `alt` to fall through to plain identifier or function call.
+fn struct_lit(input: &str) -> IResult<&str, UncheckedExpr> {
+    let (rest, name) = preceded(multispace0, identifier)(input)?;
+    // Commit only if '{' follows (after optional whitespace).
+    let (rest, _) = preceded(multispace0, char('{'))(rest)?;
+    let (rest, fields) = separated_list0(
+        preceded(multispace0, char(',')),
+        struct_field_init,
+    )(rest)?;
+    let (rest, _) = opt(preceded(multispace0, char(',')))(rest)?;
+    let (rest, _) = preceded(multispace0, char('}'))(rest)?;
+    Ok((rest, wrap(Expr::StructLit { name: name.to_string(), fields })))
+}
+
+/// Atom: struct literal, literal, call, array literal, identifier, or parenthesized expression.
+/// `struct_lit` is tried first so `Point { x: 0 }` is not consumed as a plain identifier.
 fn atom(input: &str) -> IResult<&str, UncheckedExpr> {
     alt((
+        struct_lit,
         map(literal, |l| wrap(Expr::Literal(l.into()))),
         map(parse_call, |(name, args)| wrap(Expr::Call { name, args })),
         map(
@@ -90,7 +120,7 @@ fn atom(input: &str) -> IResult<&str, UncheckedExpr> {
     ))(input)
 }
 
-/// Primary: atom with zero or more index postfixes `[ expr ]`.
+/// Primary: atom with zero or more postfixes: `[ expr ]` (index) or `.field` (field access).
 fn primary(input: &str) -> IResult<&str, UncheckedExpr> {
     let (mut rest, mut acc) = atom(input)?;
     loop {
@@ -99,16 +129,21 @@ fn primary(input: &str) -> IResult<&str, UncheckedExpr> {
             preceded(multispace0, expression),
             preceded(multispace0, char(']')),
         )(rest);
-        match index_parse {
-            Ok((r, index)) => {
-                acc = wrap(Expr::Index {
-                    base: Box::new(acc),
-                    index: Box::new(index),
-                });
-                rest = r;
-            }
-            Err(_) => break,
+        if let Ok((r, index)) = index_parse {
+            acc = wrap(Expr::Index { base: Box::new(acc), index: Box::new(index) });
+            rest = r;
+            continue;
         }
+        let field_parse = preceded(
+            preceded(multispace0, char('.')),
+            preceded(multispace0, identifier),
+        )(rest);
+        if let Ok((r, field_name)) = field_parse {
+            acc = wrap(Expr::FieldAccess { base: Box::new(acc), field: field_name.to_string() });
+            rest = r;
+            continue;
+        }
+        break;
     }
     Ok((rest, acc))
 }
