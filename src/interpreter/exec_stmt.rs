@@ -120,9 +120,12 @@ pub fn exec_stmt(stmt: &CheckedStmt, env: &mut Environment<Value>) -> ExecResult
         Statement::Return(None) => Ok(Some(Value::Void)),
 
         // --- Assert ---
+        // A `false` assertion is a *test failure* (ErrorKind::Assertion); a
+        // non-bool operand is a genuine *runtime* fault (ruled out by the type
+        // checker, kept as a defensive fallback).
         Statement::Assert(expr) => match eval_expr(expr, env)? {
             Value::Bool(true) => Ok(None),
-            Value::Bool(false) => Err(RuntimeError::new("assertion failed")),
+            Value::Bool(false) => Err(RuntimeError::assertion("assertion failed")),
             v => Err(RuntimeError::new(format!(
                 "assert requires bool, got: {}",
                 v
@@ -136,11 +139,6 @@ pub fn exec_stmt(stmt: &CheckedStmt, env: &mut Environment<Value>) -> ExecResult
             eval_call(name, arg_vals?, env)?;
             Ok(None)
         }
-
-        // --- Assert (runtime support pending — Project 8, Part 3) ---
-        Statement::Assert(_) => Err(RuntimeError::new(
-            "assert is not yet supported by the interpreter",
-        )),
     }
 }
 

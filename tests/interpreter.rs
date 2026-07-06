@@ -347,3 +347,38 @@ fn test_test_block_with_variables() {
     "#;
     assert!(run_tests_str(src).is_ok(), "{}", run_tests_str(src).unwrap_err());
 }
+
+// A failed assertion is reported as a *failed* test, not an *errored* one.
+#[test]
+fn test_assertion_failure_classified_as_failed() {
+    let src = r#"
+        test "bad" { assert 1 == 2; }
+    "#;
+    let msg = run_tests_str(src).unwrap_err();
+    assert!(msg.contains("1 failed"), "unexpected summary: {}", msg);
+    assert!(msg.contains("0 errored"), "unexpected summary: {}", msg);
+}
+
+// A genuine runtime fault (division by zero) is caught — not a panic — and
+// classified as an *errored* test, distinct from an assertion failure.
+#[test]
+fn test_runtime_error_classified_as_errored() {
+    let src = r#"
+        int div(int a, int b) { return a / b; }
+        test "boom" { assert div(1, 0) == 0; }
+    "#;
+    let msg = run_tests_str(src).unwrap_err();
+    assert!(msg.contains("1 errored"), "unexpected summary: {}", msg);
+    assert!(msg.contains("0 failed"), "unexpected summary: {}", msg);
+}
+
+// Division by zero surfaces as a RuntimeError even in --run mode (regression:
+// it used to panic and abort the whole interpreter).
+#[test]
+fn test_division_by_zero_is_runtime_error() {
+    let src = r#"
+        void main() { int x = 1 / 0; }
+    "#;
+    let err = run(src).unwrap_err();
+    assert!(err.contains("division by zero"), "unexpected error: {}", err);
+}
